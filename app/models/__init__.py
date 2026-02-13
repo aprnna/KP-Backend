@@ -1,17 +1,13 @@
-"""
-Models package for ORM definitions.
-"""
-
-from app.models.job import ScrapingJob, ScrapingLog
 from app.models.author import Author
-from app.models.work import Work, AuthorWork
+from app.models.article import Article, AuthorArticle
 from app.models.raw_response import RawResponse
+from app.models.job import ScrapingJob, ScrapingLog
 
 __all__ = [
+    "Author",
+    "Article",
+    "AuthorArticle",
+    "RawResponse",
     "ScrapingJob",
     "ScrapingLog",
-    "Author",
-    "Work",
-    "AuthorWork",
-    "RawResponse",
 ]

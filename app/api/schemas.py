@@ -188,3 +188,66 @@ class ErrorResponse(BaseModel):
                 "detail": {"year_start": "must be less than year_end"}
             }
         }
+
+
+# ============================================
+# Domain Schemas
+# ============================================
+
+class ArticleSchema(BaseModel):
+    """Schema for article details."""
+    id_article: int
+    id_sinta: Optional[int] = None
+    doi: Optional[str] = None
+    title: Optional[str] = None
+    authors: Optional[str] = None
+    journal_title: Optional[str] = None
+    short_journal_title: Optional[str] = None
+    publisher: Optional[str] = None
+    issue: Optional[str] = None
+    volume: Optional[str] = None
+    page: Optional[str] = None
+    published: Optional[str] = None
+    type: Optional[str] = None
+    pdf_link: Optional[str] = None
+    issn: Optional[str] = None
+    issn_type: Optional[str] = None
+    indexed_date_time: Optional[str] = None
+    indexed_date_parts: Optional[str] = None
+    url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AuthorSchema(BaseModel):
+    """Schema for author details."""
+    fullname: Optional[str] = None
+    id_sinta: int
+    nidn: Optional[str] = None
+    degree: Optional[str] = None
+    major: Optional[str] = None
+    faculty: Optional[str] = None
+    sinta_score_overall: Optional[int] = None
+    sinta_score_3yr: Optional[int] = None
+    affil_score: Optional[int] = None
+    affil_score_3yr: Optional[int] = None
+    subject_research: Optional[str] = None
+    s_article_scopus: Optional[int] = None
+    s_citation_scopus: Optional[int] = None
+    s_cited_document_scopus: Optional[int] = None
+    s_hindex_scopus: Optional[int] = None
+    s_i10_index_scopus: Optional[int] = None
+    s_gindex_scopus: Optional[int] = None
+    s_article_gscholar: Optional[int] = None
+    s_citation_gscholar: Optional[int] = None
+    s_cited_document_gscholar: Optional[int] = None
+    s_hindex_gscholar: Optional[int] = None
+    s_i10_index_gscholar: Optional[int] = None
+    s_gindex_gscholar: Optional[int] = None
+    _fullname_norm: Optional[str] = None
+
+    articles: List[ArticleSchema] = []
+
+    class Config:
+        from_attributes = True

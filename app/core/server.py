@@ -136,7 +136,6 @@ def index_route(app) -> FastAPI:
 
 
 def v1_route(app) -> FastAPI:
-    """Include v1 API routes"""
     app.include_router(
         router_v1,
         prefix="/api/v1",
@@ -147,7 +146,6 @@ def v1_route(app) -> FastAPI:
 
 def create_application() -> FastAPI:
     """Create and configure FastAPI application"""
-    
     app = FastAPI(
         title=settings.app_name,
         description="""

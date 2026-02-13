@@ -121,10 +121,9 @@ async def run_scraping_background(job_id: str, authors: list = None):
     
     try:
         async with get_db_context() as db:
-            job_service = JobService(db)
-            scraping_service = ScrapingService(db, job_service)
+            scraping_service = ScrapingService(db)
             
-            await scraping_service.run_scraping_job(job_id, authors)
+            await scraping_service.run_scraping_job(job_id)
             
     except Exception as e:
         logger.error(f"Background scraping failed for job {job_id}: {e}", exc_info=True)

@@ -46,12 +46,12 @@ class ScrapingJob(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, index=True)
     source: Mapped[str] = mapped_column(
-        Enum(JobSource), 
+        Enum(JobSource, values_callable=lambda x: [e.value for e in x]), 
         nullable=False,
         default=JobSource.BOTH
     )
     status: Mapped[str] = mapped_column(
-        Enum(JobStatus), 
+        Enum(JobStatus, values_callable=lambda x: [e.value for e in x]), 
         nullable=False, 
         default=JobStatus.PENDING,
         index=True
@@ -122,7 +122,7 @@ class ScrapingLog(Base):
         index=True
     )
     level: Mapped[str] = mapped_column(
-        Enum(LogLevel),
+        Enum(LogLevel, values_callable=lambda x: [e.value for e in x]),
         default=LogLevel.INFO
     )
     message: Mapped[str] = mapped_column(Text, nullable=False)
