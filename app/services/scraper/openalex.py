@@ -8,6 +8,7 @@ Preserves logic:
 - Picking top result by relevance
 - Extracting specific stats: h-index, i10-index, 2yr_mean_citedness
 """
+ # Note: This scraper focuses on author matching and data extraction.
 
 import logging
 from typing import List, Dict, Any, Optional, Callable
