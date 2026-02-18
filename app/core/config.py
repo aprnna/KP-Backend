@@ -47,18 +47,18 @@ class Settings(BaseSettings):
     year_end: int = int(os.getenv("YEAR_END", 2026))
     filter_unikom: bool = os.getenv("FILTER_UNIKOM", "false").lower() == "true"
 
-    # Crossref API settings
-    crossref_rows_per_request: int = 100
-    crossref_max_offset: int = 10000
-    crossref_request_delay: float = 0.5  # seconds
-    crossref_max_retries: int = 3
-    crossref_base_url: str = "https://api.crossref.org"
+    # Authors API settings
+    Authors_rows_per_request: int = 100
+    Authors_max_offset: int = 10000
+    Authors_request_delay: float = 0.5  # seconds
+    Authors_max_retries: int = 3
+    Authors_base_url: str = "https://sinta.kemdiktisaintek.go.id/affiliations/authors/528"
 
-    # OpenAlex API settings
-    openalex_per_page: int = 10
-    openalex_request_delay: float = 0.1  # seconds
-    openalex_max_retries: int = 3
-    openalex_base_url: str = "https://api.openalex.org"
+    # Articles API settings
+    Articles_per_page: int = 10
+    Articles_request_delay: float = 0.1  # seconds
+    Articles_max_retries: int = 3
+    Articles_base_url: str = "https://sinta.kemdiktisaintek.go.id/authors/profile"
 
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
