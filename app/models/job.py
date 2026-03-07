@@ -23,8 +23,7 @@ class JobStatus(str, enum.Enum):
 
 class JobSource(str, enum.Enum):
     """Source of data for scraping"""
-    CROSSREF = "crossref"
-    OPENALEX = "openalex"
+    SINTA = "sinta"
     BOTH = "both"
 
 

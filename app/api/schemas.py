@@ -20,8 +20,7 @@ class JobStatusEnum(str, Enum):
 
 
 class JobSourceEnum(str, Enum):
-    CROSSREF = "crossref"
-    OPENALEX = "openalex"
+    SINTA = "sinta"
     BOTH = "both"
 
 
@@ -51,10 +50,6 @@ class ScrapeRequest(BaseModel):
         default=None,
         description="List of author names to scrape. If not provided, uses default list."
     )
-    filter_unikom: Optional[bool] = Field(
-        default=None,
-        description="Filter for UNIKOM affiliation (Crossref only)"
-    )
 
     class Config:
         json_schema_extra = {
@@ -62,8 +57,7 @@ class ScrapeRequest(BaseModel):
                 "source": "both",
                 "year_start": 2021,
                 "year_end": 2024,
-                "authors": ["John Doe", "Jane Smith"],
-                "filter_unikom": False
+                "authors": ["John Doe", "Jane Smith"]
             }
         }
 
@@ -198,22 +192,14 @@ class ArticleSchema(BaseModel):
     """Schema for article details."""
     id_article: int
     id_sinta: Optional[int] = None
-    doi: Optional[str] = None
-    title: Optional[str] = None
+    source: Optional[str] = None
+    article_title: Optional[str] = None
+    author: Optional[str] = None
     authors: Optional[str] = None
-    journal_title: Optional[str] = None
-    short_journal_title: Optional[str] = None
     publisher: Optional[str] = None
-    issue: Optional[str] = None
-    volume: Optional[str] = None
-    page: Optional[str] = None
-    published: Optional[str] = None
-    type: Optional[str] = None
-    pdf_link: Optional[str] = None
-    issn: Optional[str] = None
-    issn_type: Optional[str] = None
-    indexed_date_time: Optional[str] = None
-    indexed_date_parts: Optional[str] = None
+    year: Optional[str] = None
+    cited: Optional[str] = None
+    quartile: Optional[str] = None
     url: Optional[str] = None
 
     class Config:
@@ -225,8 +211,8 @@ class AuthorSchema(BaseModel):
     fullname: Optional[str] = None
     id_sinta: int
     nidn: Optional[str] = None
-    degree: Optional[str] = None
-    major: Optional[str] = None
+    profile_url: Optional[str] = None
+    departemen: Optional[str] = None
     faculty: Optional[str] = None
     sinta_score_overall: Optional[int] = None
     sinta_score_3yr: Optional[int] = None
@@ -245,7 +231,12 @@ class AuthorSchema(BaseModel):
     s_hindex_gscholar: Optional[int] = None
     s_i10_index_gscholar: Optional[int] = None
     s_gindex_gscholar: Optional[int] = None
-    _fullname_norm: Optional[str] = None
+    
+    s_quartile_scopus_no_q: Optional[int] = None
+    s_quartile_scopus_q1: Optional[int] = None
+    s_quartile_scopus_q2: Optional[int] = None
+    s_quartile_scopus_q3: Optional[int] = None
+    s_quartile_scopus_q4: Optional[int] = None
 
     articles: List[ArticleSchema] = []
 

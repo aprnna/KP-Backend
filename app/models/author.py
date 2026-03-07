@@ -8,9 +8,10 @@ class Author(Base):
     fullname = Column(Text, nullable=True)
     id_sinta = Column(Integer, primary_key=True)
     nidn = Column(Text, nullable=True)
-    degree = Column(Text, nullable=True)
-    major = Column(Text, nullable=True)
+    profile_url = Column(Text, nullable=True)
+    departemen = Column(Text, nullable=True)
     faculty = Column(Text, nullable=True)
+
     sinta_score_overall = Column(Integer, nullable=True)
     sinta_score_3yr = Column(Integer, nullable=True)
     affil_score = Column(Integer, nullable=True)
@@ -28,6 +29,11 @@ class Author(Base):
     s_hindex_gscholar = Column(Integer, nullable=True)
     s_i10_index_gscholar = Column(Integer, nullable=True)
     s_gindex_gscholar = Column(Integer, nullable=True)
-    _fullname_norm = Column(Text, nullable=True)
+
+    s_quartile_scopus_no_q = Column(Integer, nullable=True)
+    s_quartile_scopus_q1 = Column(Integer, nullable=True)
+    s_quartile_scopus_q2 = Column(Integer, nullable=True)
+    s_quartile_scopus_q3 = Column(Integer, nullable=True)
+    s_quartile_scopus_q4 = Column(Integer, nullable=True)
 
     articles = relationship("Article", secondary="author_article", back_populates="authors_rel")

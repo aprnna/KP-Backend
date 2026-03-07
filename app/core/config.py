@@ -45,7 +45,6 @@ class Settings(BaseSettings):
     # Scraping Config
     year_start: int = int(os.getenv("YEAR_START", 2021))
     year_end: int = int(os.getenv("YEAR_END", 2026))
-    filter_unikom: bool = os.getenv("FILTER_UNIKOM", "false").lower() == "true"
 
     # Authors API settings
     Authors_rows_per_request: int = 100
