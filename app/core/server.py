@@ -4,10 +4,11 @@ Sets up middlewares, routes, lifespan events, and logging.
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from sqlalchemy import update
 
 import time
 import logging
@@ -15,7 +16,8 @@ import logging
 from app.api import health_route
 from app.api.v1.router import router_v1
 from app.core.config import settings
-from app.core.database import init_db, close_db
+from app.core.database import init_db, close_db, async_session_maker
+from app.models.job import ScrapingJob, JobStatus
 
 
 logger = logging.getLogger(__name__)
@@ -75,18 +77,40 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting application...")
-    
+
     # Setup logging
     setup_logging()
-    
+
     # Initialize database
     try:
         await init_db()
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-        # Don't fail startup, DB might not be available yet
-    
+        # Don't fail startup; DB might not be available yet
+
+    # --- Stale job recovery ---
+    # Any job left in RUNNING state from a previous server crash is a zombie
+    # that would permanently block new scrape requests. Reset them to FAILED.
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                update(ScrapingJob)
+                .where(ScrapingJob.status == JobStatus.RUNNING)
+                .values(
+                    status=JobStatus.FAILED,
+                    finished_at=datetime.utcnow(),
+                    error_message="Server restarted while job was running",
+                )
+            )
+            await session.commit()
+            if result.rowcount:
+                logger.warning(
+                    f"Recovered {result.rowcount} stale RUNNING job(s) → FAILED"
+                )
+    except Exception as e:
+        logger.error(f"Stale job recovery failed: {e}")
+
     # Start scheduler
     try:
         from app.services.scheduler_service import setup_scheduler, start_scheduler
@@ -95,7 +119,7 @@ async def lifespan(app: FastAPI):
         logger.info("Scheduler started successfully")
     except Exception as e:
         logger.error(f"Scheduler initialization failed: {e}")
-    
+
     logger.info("Application started successfully")
     
     yield

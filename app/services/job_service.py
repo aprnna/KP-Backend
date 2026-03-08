@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from sqlalchemy import select, desc
+from sqlalchemy import func, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job import ScrapingJob, ScrapingLog, JobStatus, JobSource, LogLevel
@@ -22,12 +22,33 @@ class JobService:
     Provides methods for:
     - Creating new jobs
     - Updating job status and progress
-    - Adding logs
-    - Querying jobs
+    - Adding logs to job records
+    - Querying and listing jobs
+    - Enforcing single-job concurrency via SELECT FOR UPDATE guard
     """
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def check_no_running_jobs(self) -> bool:
+        """
+        Verify no scraping job is currently in RUNNING state.
+
+        Uses SELECT FOR UPDATE to prevent a TOCTOU race condition where two
+        concurrent API requests both read running_count == 0 before either
+        creates a new job.
+
+        Returns:
+            True if no job is running (safe to start a new one).
+            False if a job is already running.
+        """
+        running_count_result = await self.db.execute(
+            select(func.count(ScrapingJob.id))
+            .where(ScrapingJob.status == JobStatus.RUNNING)
+            .with_for_update()
+        )
+        running_count = running_count_result.scalar_one()
+        return running_count == 0
 
     async def create_job(
         self,
@@ -36,11 +57,11 @@ class JobService:
     ) -> ScrapingJob:
         """
         Create a new scraping job.
-        
+
         Args:
             source: Data source (crossref, openalex, or both)
             parameters: Job parameters (e.g., year_start, year_end)
-            
+
         Returns:
             Created ScrapingJob instance
         """
@@ -51,49 +72,45 @@ class JobService:
             parameters=parameters,
             created_at=datetime.utcnow(),
         )
-        
+
         self.db.add(job)
         await self.db.flush()
         await self.db.refresh(job)
-        
-        logger.info(f"Created job {job.job_id} with source={source}")
-        
-        # Add initial log
+
+        logger.info("job_created", extra={"job_id": job.job_id, "source": source})
+
+        # Add initial log entry so the job has context from creation
         await self.add_log(
             job.id,
             LogLevel.INFO,
             f"Job created with source={source}",
-            {"parameters": parameters}
+            {"parameters": parameters},
         )
-        
+
         return job
 
     async def start_job(self, job_id: str) -> Optional[ScrapingJob]:
         """
         Mark job as running.
-        
+
         Args:
             job_id: Job UUID
-            
+
         Returns:
             Updated job or None if not found
         """
         job = await self.get_job_by_uuid(job_id)
         if not job:
             return None
-        
+
         job.status = JobStatus.RUNNING
         job.started_at = datetime.utcnow()
-        
+
         await self.db.flush()
-        
-        await self.add_log(
-            job.id,
-            LogLevel.INFO,
-            "Job started"
-        )
-        
-        logger.info(f"Job {job_id} started")
+
+        await self.add_log(job.id, LogLevel.INFO, "Job started")
+
+        logger.info("job_started", extra={"job_id": job_id})
         return job
 
     async def update_progress(
@@ -104,25 +121,24 @@ class JobService:
     ) -> Optional[ScrapingJob]:
         """
         Update job progress.
-        
+
         Args:
             job_id: Job UUID
             processed: Number of records processed
             total: Total records (optional, updates if provided)
-            
+
         Returns:
             Updated job or None if not found
         """
         job = await self.get_job_by_uuid(job_id)
         if not job:
             return None
-        
+
         job.processed_records = processed
         if total is not None:
             job.total_records = total
-        
+
         await self.db.flush()
-        
         return job
 
     async def finish_job(
@@ -132,31 +148,34 @@ class JobService:
     ) -> Optional[ScrapingJob]:
         """
         Mark job as finished successfully.
-        
+
         Args:
             job_id: Job UUID
             total_processed: Final count of processed records
-            
+
         Returns:
             Updated job or None if not found
         """
         job = await self.get_job_by_uuid(job_id)
         if not job:
             return None
-        
+
         job.status = JobStatus.FINISHED
         job.finished_at = datetime.utcnow()
         job.processed_records = total_processed
-        
+
         await self.db.flush()
-        
+
         await self.add_log(
             job.id,
             LogLevel.INFO,
-            f"Job finished successfully with {total_processed} records processed"
+            f"Job finished successfully with {total_processed} records processed",
         )
-        
-        logger.info(f"Job {job_id} finished with {total_processed} records")
+
+        logger.info(
+            "job_finished",
+            extra={"job_id": job_id, "total_records": total_processed},
+        )
         return job
 
     async def fail_job(
@@ -166,31 +185,31 @@ class JobService:
     ) -> Optional[ScrapingJob]:
         """
         Mark job as failed.
-        
+
         Args:
             job_id: Job UUID
             error_message: Error description
-            
+
         Returns:
             Updated job or None if not found
         """
         job = await self.get_job_by_uuid(job_id)
         if not job:
             return None
-        
+
         job.status = JobStatus.FAILED
         job.finished_at = datetime.utcnow()
         job.error_message = error_message
-        
+
         await self.db.flush()
-        
+
         await self.add_log(
             job.id,
             LogLevel.ERROR,
-            f"Job failed: {error_message}"
+            f"Job failed: {error_message}",
         )
-        
-        logger.error(f"Job {job_id} failed: {error_message}")
+
+        logger.error("job_failed", extra={"job_id": job_id, "error": error_message})
         return job
 
     async def add_log(
@@ -202,13 +221,13 @@ class JobService:
     ) -> ScrapingLog:
         """
         Add log entry for a job.
-        
+
         Args:
-            job_db_id: Database ID of the job
+            job_db_id: Database ID (integer PK) of the job
             level: Log level
             message: Log message
             extra_data: Additional data (JSON)
-            
+
         Returns:
             Created ScrapingLog instance
         """
@@ -219,19 +238,18 @@ class JobService:
             extra_data=extra_data,
             created_at=datetime.utcnow(),
         )
-        
+
         self.db.add(log)
         await self.db.flush()
-        
         return log
 
     async def get_job_by_uuid(self, job_id: str) -> Optional[ScrapingJob]:
         """
         Get job by UUID.
-        
+
         Args:
             job_id: Job UUID
-            
+
         Returns:
             ScrapingJob or None if not found
         """
@@ -242,19 +260,18 @@ class JobService:
 
     async def get_job_with_logs(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get job with its logs.
-        
+        Get job with its most recent logs.
+
         Args:
             job_id: Job UUID
-            
+
         Returns:
-            Dictionary with job data and logs
+            Dictionary with job data and logs, or None if not found
         """
         job = await self.get_job_by_uuid(job_id)
         if not job:
             return None
-        
-        # Fetch logs
+
         result = await self.db.execute(
             select(ScrapingLog)
             .where(ScrapingLog.job_id == job.id)
@@ -262,11 +279,8 @@ class JobService:
             .limit(100)
         )
         logs = result.scalars().all()
-        
-        return {
-            "job": job,
-            "logs": logs,
-        }
+
+        return {"job": job, "logs": logs}
 
     async def list_jobs(
         self,
@@ -277,26 +291,26 @@ class JobService:
     ) -> List[ScrapingJob]:
         """
         List jobs with optional filters.
-        
+
         Args:
             status: Filter by status
             source: Filter by source
             limit: Maximum number of results
             offset: Offset for pagination
-            
+
         Returns:
             List of ScrapingJob instances
         """
         query = select(ScrapingJob)
-        
+
         if status:
             query = query.where(ScrapingJob.status == status)
         if source:
             query = query.where(ScrapingJob.source == source)
-        
+
         query = query.order_by(desc(ScrapingJob.created_at))
         query = query.limit(limit).offset(offset)
-        
+
         result = await self.db.execute(query)
         return list(result.scalars().all())
 

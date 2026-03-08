@@ -4,7 +4,7 @@ Pydantic schemas for API requests and responses.
 
 from datetime import datetime
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 
@@ -49,12 +49,24 @@ class ScrapeRequest(BaseModel):
     )
     authors: Optional[List[str]] = Field(
         default=None,
-        description="List of author names to scrape. If not provided, uses default list."
+        max_length=500,
+        description="List of author names to scrape (max 500). If not provided, uses default list."
     )
     filter_unikom: Optional[bool] = Field(
         default=None,
         description="Filter for UNIKOM affiliation (Crossref only)"
     )
+
+    @field_validator("authors", mode="before")
+    @classmethod
+    def authors_must_not_contain_blanks(cls, v):
+        if v is None:
+            return v
+        cleaned = [a.strip() for a in v if isinstance(a, str)]
+        invalid = [a for a in cleaned if not a]
+        if invalid:
+            raise ValueError("authors list must not contain empty or blank strings")
+        return cleaned
 
     class Config:
         json_schema_extra = {

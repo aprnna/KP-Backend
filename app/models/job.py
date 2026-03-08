@@ -5,7 +5,7 @@ Scraping Job and Log models for tracking scraping operations.
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import (
-    Column, Integer, String, Text, DateTime, Enum, JSON, ForeignKey
+    Integer, String, Text, DateTime, Enum, JSON, ForeignKey
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 import enum

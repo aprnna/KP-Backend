@@ -10,9 +10,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
 
 from app.core.config import settings
-from app.core.database import get_db_context
-from app.services.job_service import JobService
-from app.services.scraping_service import ScrapingService
 from app.models.job import JobSource
 
 
@@ -27,20 +24,21 @@ def get_scheduler() -> Optional[AsyncIOScheduler]:
     return scheduler
 
 
-async def monthly_scrape_job():
+async def monthly_scrape_job() -> None:
     """
     Monthly scraping job function.
     Triggered by scheduler on configured day of month.
-    Uses the same logic as manual trigger.
+    ScrapingService manages its own session lifecycle internally.
     """
-    logger.info("Starting scheduled monthly scraping job")
-    
+    logger.info("scheduled_scrape_start")
+
     try:
-        async with get_db_context() as db:
+        from app.core.database import async_session_maker
+        from app.services.job_service import JobService
+
+        # Create the job record in its own short-lived session
+        async with async_session_maker() as db:
             job_service = JobService(db)
-            scraping_service = ScrapingService(db, job_service)
-            
-            # Create a scheduled job with default parameters
             job = await job_service.create_job(
                 source=JobSource.BOTH,
                 parameters={
@@ -48,53 +46,65 @@ async def monthly_scrape_job():
                     "year_end": settings.year_end,
                     "triggered_by": "scheduler",
                     "schedule": f"day {settings.scrape_day_of_month} of month",
-                }
+                },
             )
-            
-            logger.info(f"Scheduled job created: {job.job_id}")
-            
-            # Run the scraping (this will run in background)
-            await scraping_service.run_scraping_job(job.job_id)
-            
-            logger.info(f"Scheduled scraping job {job.job_id} completed")
-            
+            await db.commit()
+
+        logger.info("scheduled_job_created", extra={"job_id": job.job_id})
+
+        # Run the scraping — ScrapingService creates its own sessions
+        from app.services.scraping_service import ScrapingService
+        scraping_service = ScrapingService()
+        await scraping_service.run_scraping_job(job.job_id)
+
+        logger.info("scheduled_scrape_complete", extra={"job_id": job.job_id})
+
     except Exception as e:
-        logger.error(f"Error in scheduled scraping job: {e}", exc_info=True)
+        logger.error(
+            "scheduled_scrape_error",
+            extra={"error": str(e)},
+            exc_info=True,
+        )
         raise
 
 
-def job_listener(event):
+def job_listener(event) -> None:
     """Listener for scheduler job events."""
     if event.exception:
-        logger.error(f"Scheduled job failed: {event.exception}")
+        logger.error(
+            "scheduler_job_failed",
+            extra={"scheduled_job_id": event.job_id, "error": str(event.exception)},
+        )
     else:
-        logger.info(f"Scheduled job completed: {event.job_id}")
+        logger.info(
+            "scheduler_job_executed",
+            extra={"scheduled_job_id": event.job_id},
+        )
 
 
 def setup_scheduler() -> Optional[AsyncIOScheduler]:
     """
     Set up and configure the scheduler.
-    
+
     Returns:
         Configured scheduler instance or None if disabled
     """
     global scheduler
-    
+
     if not settings.scheduler_enabled:
-        logger.info("Scheduler is disabled")
+        logger.info("scheduler_disabled")
         return None
-    
+
     scheduler = AsyncIOScheduler(
         timezone="UTC",
         job_defaults={
             "coalesce": True,
             "max_instances": 1,
             "misfire_grace_time": 3600,  # 1 hour grace time
-        }
+        },
     )
-    
-    # Add monthly scraping job
-    # Runs on configured day of month at 02:00 UTC
+
+    # Add monthly scraping job — runs on configured day of month at 02:00 UTC
     scheduler.add_job(
         monthly_scrape_job,
         CronTrigger(
@@ -106,51 +116,55 @@ def setup_scheduler() -> Optional[AsyncIOScheduler]:
         name="Monthly Academic Data Scraping",
         replace_existing=True,
     )
-    
-    # Add event listener
+
+    # Add event listener for success/failure tracking
     scheduler.add_listener(job_listener, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
-    
+
     logger.info(
-        f"Scheduler configured: monthly scrape on day {settings.scrape_day_of_month} at 02:00 UTC"
+        "scheduler_configured",
+        extra={
+            "scrape_day_of_month": settings.scrape_day_of_month,
+            "time_utc": "02:00",
+        },
     )
-    
+
     return scheduler
 
 
-def start_scheduler():
+def start_scheduler() -> None:
     """Start the scheduler if configured."""
     global scheduler
-    
+
     if scheduler and not scheduler.running:
         scheduler.start()
-        logger.info("Scheduler started")
+        logger.info("scheduler_started")
 
 
-def shutdown_scheduler():
+def shutdown_scheduler() -> None:
     """Shutdown the scheduler gracefully."""
     global scheduler
-    
+
     if scheduler and scheduler.running:
         scheduler.shutdown(wait=False)
-        logger.info("Scheduler shutdown")
+        logger.info("scheduler_shutdown")
 
 
 def get_scheduler_status() -> dict:
     """
     Get current scheduler status.
-    
+
     Returns:
         Dictionary with scheduler status info
     """
     global scheduler
-    
+
     if not scheduler:
         return {
             "enabled": False,
             "running": False,
             "jobs": [],
         }
-    
+
     jobs = []
     for job in scheduler.get_jobs():
         jobs.append({
@@ -159,7 +173,7 @@ def get_scheduler_status() -> dict:
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
             "trigger": str(job.trigger),
         })
-    
+
     return {
         "enabled": settings.scheduler_enabled,
         "running": scheduler.running,
