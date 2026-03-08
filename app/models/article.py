@@ -2,11 +2,16 @@
 Article and AuthorArticle ORM models.
 """
 
-from typing import List, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Optional
 from sqlalchemy import Integer, Text, ForeignKey
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.author import Author
 
 
 class Article(Base):

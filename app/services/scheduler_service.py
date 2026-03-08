@@ -133,8 +133,6 @@ def setup_scheduler() -> Optional[AsyncIOScheduler]:
 
 def start_scheduler() -> None:
     """Start the scheduler if configured."""
-    global scheduler
-
     if scheduler and not scheduler.running:
         scheduler.start()
         logger.info("scheduler_started")
@@ -142,8 +140,6 @@ def start_scheduler() -> None:
 
 def shutdown_scheduler() -> None:
     """Shutdown the scheduler gracefully."""
-    global scheduler
-
     if scheduler and scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("scheduler_shutdown")
@@ -156,8 +152,6 @@ def get_scheduler_status() -> dict:
     Returns:
         Dictionary with scheduler status info
     """
-    global scheduler
-
     if not scheduler:
         return {
             "enabled": False,
