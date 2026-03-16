@@ -1,13 +1,12 @@
-from app.models.author import Author
-from app.models.article import Article, AuthorArticle
 from app.models.raw_response import RawResponse
 from app.models.job import ScrapingJob, ScrapingLog
+from app.models.sinta_article import SintaArticle
+from app.models.sinta_author import SintaAuthor
 
 __all__ = [
-    "Author",
-    "Article",
-    "AuthorArticle",
     "RawResponse",
     "ScrapingJob",
     "ScrapingLog",
+    "SintaArticle",
+    "SintaAuthor",
 ]

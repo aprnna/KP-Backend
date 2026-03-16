@@ -24,8 +24,8 @@ class TestJobStatusEnum:
 
 class TestJobSourceEnum:
     def test_values(self):
-        assert JobSource.CROSSREF == "crossref"
-        assert JobSource.OPENALEX == "openalex"
+        assert JobSource.SINTA_ARTICLES == "sinta_articles"
+        assert JobSource.SINTA_AUTHORS == "sinta_authors"
         assert JobSource.BOTH == "both"
 
 

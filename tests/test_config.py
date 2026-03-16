@@ -11,13 +11,10 @@ from app.core.config import Settings
 @pytest.fixture
 def default_settings() -> Settings:
     """Return a Settings instance with no real .env influence."""
-    # Clear any env vars that would override defaults for clean tests
     env_overrides = {
         "APP_NAME": "FastAPI Academic Scraper",
         "ENVIRONMENT": "development",
         "DEBUG": "true",
-        "YEAR_START": "2021",
-        "YEAR_END": "2026",
         "SCRAPE_DAY_OF_MONTH": "1",
         "SCHEDULER_ENABLED": "true",
         "ALLOWED_ORIGINS": "http://localhost:3000,http://localhost:8080",
@@ -35,22 +32,21 @@ class TestSettingsDefaults:
     def test_environment_default(self, default_settings: Settings):
         assert default_settings.environment in ("development", "production", "staging")
 
-    def test_year_range_is_valid(self, default_settings: Settings):
-        assert default_settings.year_start <= default_settings.year_end
-
     def test_scrape_day_in_valid_range(self, default_settings: Settings):
         assert 1 <= default_settings.scrape_day_of_month <= 31
 
-    def test_crossref_rows_positive(self, default_settings: Settings):
-        assert default_settings.crossref_rows_per_request > 0
+    def test_sinta_request_delay_positive(self, default_settings: Settings):
+        assert default_settings.sinta_request_delay > 0
 
-    def test_openalex_per_page_positive(self, default_settings: Settings):
-        assert default_settings.openalex_per_page > 0
+    def test_sinta_max_retries_positive(self, default_settings: Settings):
+        assert default_settings.sinta_max_retries > 0
+
+    def test_sinta_affiliation_id_positive(self, default_settings: Settings):
+        assert default_settings.sinta_affiliation_id > 0
 
 
 class TestSettingsComputedProperties:
     def test_is_development(self, default_settings: Settings):
-        # property delegates to environment field
         assert default_settings.is_development == (
             default_settings.environment.lower() == "development"
         )

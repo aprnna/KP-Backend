@@ -82,9 +82,8 @@ async def init_db():
     Should be called once at application startup.
     """
     async with engine.begin() as conn:
-        # Import all models here to ensure they are registered
-        from app.models import job, author, work, raw_response  # noqa: F401
-        
+        # Import all models so their tables are registered in Base.metadata.
+        from app.models import job, raw_response, SintaArticle, SintaAuthor 
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables created successfully")
 

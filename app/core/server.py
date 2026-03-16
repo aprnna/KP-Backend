@@ -81,13 +81,12 @@ async def lifespan(app: FastAPI):
     # Setup logging
     setup_logging()
 
-    # Initialize database
+    # Initialize main database
     try:
         await init_db()
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-        # Don't fail startup; DB might not be available yet
 
     # --- Stale job recovery ---
     # Any job left in RUNNING state from a previous server crash is a zombie
@@ -174,17 +173,18 @@ def create_application() -> FastAPI:
         title=settings.app_name,
         description="""
         Academic Data Scraping Service API.
-        
+
         This service scrapes academic data from:
-        - **Crossref**: Publication/works data
-        - **OpenAlex**: Author information and statistics
-        
+        - **SINTA**: Author profiles, bibliometrics, and publication lists
+
+        Results are stored in a dedicated scraping database (`sinta_articles`, `sinta_authors`).
+
         ## Features
         - Manual and scheduled scraping
         - Job tracking with progress updates
         - Idempotent data storage (upsert)
         - Rate limiting and retry logic
-        
+
         ## Authentication
         Protected endpoints require `X-API-Key` header.
         """,

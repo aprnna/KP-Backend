@@ -20,8 +20,8 @@ class JobStatusEnum(str, Enum):
 
 
 class JobSourceEnum(str, Enum):
-    CROSSREF = "crossref"
-    OPENALEX = "openalex"
+    SINTA_ARTICLES = "sinta_articles"
+    SINTA_AUTHORS = "sinta_authors"
     BOTH = "both"
 
 
@@ -35,26 +35,10 @@ class ScrapeRequest(BaseModel):
         default=JobSourceEnum.BOTH,
         description="Data source to scrape from"
     )
-    year_start: Optional[int] = Field(
-        default=None,
-        description="Start year for scraping (inclusive)",
-        ge=1900,
-        le=2100
-    )
-    year_end: Optional[int] = Field(
-        default=None,
-        description="End year for scraping (inclusive)",
-        ge=1900,
-        le=2100
-    )
     authors: Optional[List[str]] = Field(
         default=None,
         max_length=500,
         description="List of author names to scrape (max 500). If not provided, uses default list."
-    )
-    filter_unikom: Optional[bool] = Field(
-        default=None,
-        description="Filter for UNIKOM affiliation (Crossref only)"
     )
 
     @field_validator("authors", mode="before")
@@ -68,14 +52,16 @@ class ScrapeRequest(BaseModel):
             raise ValueError("authors list must not contain empty or blank strings")
         return cleaned
 
+    sinta_ids: Optional[List[int]] = Field(
+        default=None,
+        description="Optional list of specific SINTA IDs to scrape. If not provided, scrapes all available authors."
+    )
+
     class Config:
         json_schema_extra = {
             "example": {
                 "source": "both",
-                "year_start": 2021,
-                "year_end": 2024,
-                "authors": ["John Doe", "Jane Smith"],
-                "filter_unikom": False
+                "sinta_ids": [12345, 67890]
             }
         }
 
@@ -206,60 +192,47 @@ class ErrorResponse(BaseModel):
 # Domain Schemas
 # ============================================
 
-class ArticleSchema(BaseModel):
-    """Schema for article details."""
-    id_article: int
-    id_sinta: Optional[int] = None
-    doi: Optional[str] = None
-    title: Optional[str] = None
-    authors: Optional[str] = None
-    journal_title: Optional[str] = None
-    short_journal_title: Optional[str] = None
-    publisher: Optional[str] = None
-    issue: Optional[str] = None
-    volume: Optional[str] = None
-    page: Optional[str] = None
-    published: Optional[str] = None
-    type: Optional[str] = None
-    pdf_link: Optional[str] = None
-    issn: Optional[str] = None
-    issn_type: Optional[str] = None
-    indexed_date_time: Optional[str] = None
-    indexed_date_parts: Optional[str] = None
-    url: Optional[str] = None
+class SintaArticleResponse(BaseModel):
+    """Schema for SintaArticle details."""
+    id: int
+    id_sinta: Optional[int]
+    source: Optional[str]
+    article_title: Optional[str]
+    authors: Optional[str]
+    publisher: Optional[str]
+    year: Optional[str]
+    cited: Optional[str]
+    quartile: Optional[str]
+    url: Optional[str]
+    scraped_at: Optional[datetime]
 
     class Config:
         from_attributes = True
 
 
-class AuthorSchema(BaseModel):
-    """Schema for author details."""
-    fullname: Optional[str] = None
+class SintaAuthorResponse(BaseModel):
+    """Schema for SintaAuthor details."""
     id_sinta: int
-    nidn: Optional[str] = None
-    degree: Optional[str] = None
-    major: Optional[str] = None
-    faculty: Optional[str] = None
-    sinta_score_overall: Optional[int] = None
-    sinta_score_3yr: Optional[int] = None
-    affil_score: Optional[int] = None
-    affil_score_3yr: Optional[int] = None
-    subject_research: Optional[str] = None
-    s_article_scopus: Optional[int] = None
-    s_citation_scopus: Optional[int] = None
-    s_cited_document_scopus: Optional[int] = None
-    s_hindex_scopus: Optional[int] = None
-    s_i10_index_scopus: Optional[int] = None
-    s_gindex_scopus: Optional[int] = None
-    s_article_gscholar: Optional[int] = None
-    s_citation_gscholar: Optional[int] = None
-    s_cited_document_gscholar: Optional[int] = None
-    s_hindex_gscholar: Optional[int] = None
-    s_i10_index_gscholar: Optional[int] = None
-    s_gindex_gscholar: Optional[int] = None
-    _fullname_norm: Optional[str] = None
-
-    articles: List[ArticleSchema] = []
+    fullname: Optional[str]
+    major: Optional[str]
+    sinta_score_overall: Optional[int]
+    sinta_score_3yr: Optional[int]
+    affil_score: Optional[int]
+    affil_score_3yr: Optional[int]
+    s_article_scopus: Optional[int]
+    s_citation_scopus: Optional[int]
+    s_cited_document_scopus: Optional[int]
+    s_hindex_scopus: Optional[int]
+    s_i10_index_scopus: Optional[int]
+    s_gindex_scopus: Optional[int]
+    s_article_gscholar: Optional[int]
+    s_citation_gscholar: Optional[int]
+    s_cited_document_gscholar: Optional[int]
+    s_hindex_gscholar: Optional[int]
+    s_i10_index_gscholar: Optional[int]
+    s_gindex_gscholar: Optional[int]
+    subject_research: Optional[str]
+    scraped_at: Optional[datetime]
 
     class Config:
         from_attributes = True

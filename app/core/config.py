@@ -8,7 +8,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
-    
+
     # Basic app settings
     app_name: str = os.getenv("APP_NAME", "FastAPI Academic Scraper")
     environment: str = os.getenv("ENVIRONMENT", "development")
@@ -28,12 +28,12 @@ class Settings(BaseSettings):
     allowed_hosts: str = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1")
     secret_key: str = os.getenv("SECRET_KEY", "change-this-in-production")
 
-    # Database settings (MySQL)
+    # Main database settings (MySQL)
     db_host: str = os.getenv("DB_HOST", "localhost")
     db_port: int = int(os.getenv("DB_PORT", 3306))
     db_user: str = os.getenv("DB_USER", "root")
     db_password: str = os.getenv("DB_PASSWORD", "")
-    db_name: str = os.getenv("DB_NAME", "academic_scraper")
+    db_name: str = os.getenv("DB_NAME", "kp-penelitian-db")
 
     # API Security
     api_key: str = os.getenv("API_KEY", "")
@@ -42,23 +42,11 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = os.getenv("SCHEDULER_ENABLED", "true").lower() == "true"
     scrape_day_of_month: int = int(os.getenv("SCRAPE_DAY_OF_MONTH", 1))
 
-    # Scraping Config
-    year_start: int = int(os.getenv("YEAR_START", 2021))
-    year_end: int = int(os.getenv("YEAR_END", 2026))
-    filter_unikom: bool = os.getenv("FILTER_UNIKOM", "false").lower() == "true"
-
-    # Crossref API settings
-    crossref_rows_per_request: int = 100
-    crossref_max_offset: int = 10000
-    crossref_request_delay: float = 0.5  # seconds
-    crossref_max_retries: int = 3
-    crossref_base_url: str = "https://api.crossref.org"
-
-    # OpenAlex API settings
-    openalex_per_page: int = 10
-    openalex_request_delay: float = 0.1  # seconds
-    openalex_max_retries: int = 3
-    openalex_base_url: str = "https://api.openalex.org"
+    # SINTA scraper settings
+    sinta_base_url: str = "https://sinta.kemdiktisaintek.go.id"
+    sinta_affiliation_id: int = int(os.getenv("SINTA_AFFILIATION_ID", 528))
+    sinta_request_delay: float = float(os.getenv("SINTA_REQUEST_DELAY", 2.0))
+    sinta_max_retries: int = int(os.getenv("SINTA_MAX_RETRIES", 3))
 
     # Logging settings
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
@@ -82,22 +70,28 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Sync database URL for SQLAlchemy"""
-        return f"mysql+mysqlconnector://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        """Sync database URL for SQLAlchemy (main DB)."""
+        return (
+            f"mysql+mysqlconnector://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
 
     @property
     def async_database_url(self) -> str:
-        """Async database URL for SQLAlchemy with aiomysql"""
-        return f"mysql+aiomysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        """Async database URL for SQLAlchemy with aiomysql (main DB)."""
+        return (
+            f"mysql+aiomysql://{self.db_user}:{self.db_password}"
+            f"@{self.db_host}:{self.db_port}/{self.db_name}"
+        )
 
     @property
     def allowed_origins_list(self) -> List[str]:
-        """Parse comma-separated origins into list"""
+        """Parse comma-separated origins into list."""
         return [origin.strip() for origin in self.allowed_origins.split(",")]
 
     @property
     def allowed_hosts_list(self) -> List[str]:
-        """Parse comma-separated hosts into list"""
+        """Parse comma-separated hosts into list."""
         return [host.strip() for host in self.allowed_hosts.split(",")]
 
 

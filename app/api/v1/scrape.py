@@ -40,8 +40,8 @@ router = APIRouter()
     **Authentication**: Requires `X-API-Key` header.
     
     **Sources**:
-    - `crossref`: Scrape publications from Crossref API
-    - `openalex`: Scrape author data from OpenAlex API  
+    - `sinta_articles`: Scrape publications and articles from SINTA
+    - `sinta_authors`: Scrape author profiles and metrics from SINTA
     - `both`: Scrape from both sources (default)
     """,
 )
@@ -66,26 +66,24 @@ async def trigger_scrape(
             detail="A scraping job is already running. Please wait for it to complete.",
         )
 
-    # Map request source to JobSource enum
     source_map = {
-        "crossref": JobSource.CROSSREF,
-        "openalex": JobSource.OPENALEX,
+        "sinta_articles": JobSource.SINTA_ARTICLES,
+        "sinta_authors": JobSource.SINTA_AUTHORS,
         "both": JobSource.BOTH,
     }
     source = source_map.get(request.source.value, JobSource.BOTH)
 
     # Prepare parameters
     parameters = {
-        "year_start": request.year_start or settings.year_start,
-        "year_end": request.year_end or settings.year_end,
         "triggered_by": "api",
     }
 
     if request.authors:
         parameters["authors"] = request.authors
 
-    if request.filter_unikom is not None:
-        parameters["filter_unikom"] = request.filter_unikom
+    if request.sinta_ids:
+        parameters["sinta_ids"] = request.sinta_ids
+
 
     # Create the job
     job = await job_service.create_job(
@@ -99,7 +97,6 @@ async def trigger_scrape(
     background_tasks.add_task(
         run_scraping_background,
         job.job_id,
-        request.authors,
     )
 
     logger.info("scrape_job_scheduled", extra={"job_id": job.job_id, "source": source})
@@ -112,7 +109,7 @@ async def trigger_scrape(
     )
 
 
-async def run_scraping_background(job_id: str, authors: Optional[list[str]] = None) -> None:
+async def run_scraping_background(job_id: str) -> None:
     """
     Background task to run scraping.
 

@@ -59,7 +59,7 @@ class JobService:
         Create a new scraping job.
 
         Args:
-            source: Data source (crossref, openalex, or both)
+            source: Data source (sinta_articles, sinta_authors, or both)
             parameters: Job parameters (e.g., year_start, year_end)
 
         Returns:
