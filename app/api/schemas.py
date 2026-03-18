@@ -111,6 +111,7 @@ class JobSchema(BaseModel):
     duration_seconds: Optional[float] = None
     error_message: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = None
+    run_logs: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         from_attributes = True
@@ -127,7 +128,14 @@ class JobSchema(BaseModel):
                 "finished_at": None,
                 "duration_seconds": 120.5,
                 "error_message": None,
-                "parameters": {"year_start": 2021, "year_end": 2024}
+                "parameters": {"year_start": 2021, "year_end": 2024},
+                "run_logs": [
+                    {
+                        "timestamp": "2024-01-15T10:30:01",
+                        "level": "INFO",
+                        "message": "Job started"
+                    }
+                ]
             }
         }
 
@@ -201,9 +209,11 @@ class SintaArticleResponse(BaseModel):
     authors: Optional[str]
     publisher: Optional[str]
     year: Optional[str]
-    cited: Optional[str]
+    cited: Optional[int]
     quartile: Optional[str]
     url: Optional[str]
+    doi: Optional[str]
+    sinta_rank: Optional[int]
     scraped_at: Optional[datetime]
 
     class Config:

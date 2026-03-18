@@ -13,6 +13,7 @@ Key design decisions:
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,7 +23,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from app.core.database import async_session_maker
-from app.models.job import ScrapingJob, JobStatus, ScrapingLog, LogLevel, JobSource
+from app.models.job import ScrapingJob, JobStatus, JobSource
 from app.models.sinta_article import SintaArticle
 from app.models.sinta_author import SintaAuthor
 from app.services.scraper.sinta_article import SintaArticleScraper
@@ -32,6 +33,8 @@ from app.services.scraper.sinta_author import SintaAuthorScraper
 logger = logging.getLogger(__name__)
 
 ARTICLE_BATCH_SIZE = 200
+MAX_JOB_LOG_ENTRIES = 5000
+SOURCE_PRIORITY = {"rama": 1, "googlescholar": 2, "garuda": 3, "scopus": 4}
 
 
 # ---------------------------------------------------------------------------
@@ -49,19 +52,32 @@ class JobMetrics:
     def elapsed_seconds(self) -> float:
         return time.monotonic() - self.job_start
 
+PROGRESS_UPDATE_INTERVAL = 5  
 
+@dataclass
+class ProgressTracker:
+    """Track scraping progress with throttled database updates."""
+    total: int = 0
+    processed: int = 0
+    last_db_update: float = field(default_factory=time.monotonic)
+    
+    def should_update_db(self) -> bool:
+        """Check if enough time has passed for a DB update."""
+        elapsed = time.monotonic() - self.last_db_update
+        return elapsed >= PROGRESS_UPDATE_INTERVAL
+    
+    def mark_db_updated(self) -> None:
+        """Mark that DB was just updated."""
+        self.last_db_update = time.monotonic()
 # ---------------------------------------------------------------------------
 # ScrapingService
 # ---------------------------------------------------------------------------
 
 class ScrapingService:
-    """
-    Orchestrates SINTA scraping jobs:
-    1. Resolves SINTA author IDs from the main DB
-    2. Runs SintaArticleScraper and/or SintaAuthorScraper
-    3. Persists results to the separate scraping database
-    4. Updates job status and logs in the main DB
-    """
+    def __init__(self):
+        """Initialize ScrapingService with progress trackers."""
+        self._progress_trackers: Dict[int, ProgressTracker] = {}
+        self._job_log_buffers: Dict[int, List[Dict[str, Any]]] = {}
 
     async def run_scraping_job(self, job_id: str) -> None:
         """
@@ -90,7 +106,7 @@ class ScrapingService:
                         sinta_ids=None,
                         job_id=job_id,
                         on_progress=lambda sid, p, t: asyncio.create_task(
-                            self._log(job_db_id, job_id, f"Author scraping: {sid} ({p}/{t})")
+                            self._on_scraping_progress(job_db_id, job_id, sid, p, t)
                         ),
                     )
 
@@ -123,7 +139,7 @@ class ScrapingService:
                         sinta_ids=sinta_ids,
                         job_id=job_id,
                         on_progress=lambda sid, p, t: asyncio.create_task(
-                            self._log(job_db_id, job_id, f"Article scraping: {sid} ({p}/{t})")
+                            self._on_scraping_progress(job_db_id, job_id, sid, p, t)
                         ),
                     )
 
@@ -134,10 +150,13 @@ class ScrapingService:
                     f"Article scraping done: {len(article_results)} found, {total_saved} saved.",
                 )
 
-            # ----------------------------------------------------------------
-            # Finish
-            # ----------------------------------------------------------------
-            await self._finish_job(job_id, job_db_id, metrics.total_articles)
+            # Finalize once, with source-aware totals.
+            if source == JobSource.SINTA_AUTHORS:
+                final_total_records = metrics.total_authors_saved or metrics.total_sinta_ids
+            else:
+                final_total_records = metrics.total_articles
+
+            await self._finish_job(job_id, job_db_id, final_total_records)
 
             duration = metrics.elapsed_seconds()
             logger.info(
@@ -174,13 +193,9 @@ class ScrapingService:
 
             job.status = JobStatus.RUNNING
             job.started_at = datetime.utcnow()
-            session.add(ScrapingLog(
-                job_id=job.id,
-                level=LogLevel.INFO,
-                message="Job started",
-                created_at=datetime.utcnow(),
-            ))
+            job.run_logs = []
             await session.commit()
+            self._job_log_buffers[job.id] = []
             return job.id, job.parameters or {}, job.source
 
     async def _resolve_sinta_ids(self, job_id: str, job_db_id: int) -> List[int]:
@@ -208,16 +223,43 @@ class ScrapingService:
                 .values(
                     status=JobStatus.FINISHED,
                     finished_at=datetime.utcnow(),
+                    total_records=total_records,   
                     processed_records=total_records,
+                    run_logs=self._job_log_buffers.get(job_db_id, []),
                 )
             )
-            session.add(ScrapingLog(
-                job_id=job_db_id,
-                level=LogLevel.INFO,
-                message=f"Job finished — {total_records} records.",
-                created_at=datetime.utcnow(),
-            ))
             await session.commit()
+
+        # Prevent tracker buildup for long-running workers.
+        self._progress_trackers.pop(job_db_id, None)
+        self._job_log_buffers.pop(job_db_id, None)
+
+    async def _update_job_progress(self, job_db_id: int, total: int, processed: int) -> None:
+        """Update job progress in DB (throttled)."""
+        async with async_session_maker() as session:
+            await session.execute(
+                update(ScrapingJob)
+                .where(ScrapingJob.id == job_db_id)
+                .values(total_records=total, processed_records=processed)
+            )
+            await session.commit()
+
+    async def _on_scraping_progress(self, job_db_id: int, job_id: str, sinta_id: int, processed: int, total: int) -> None:
+        """Handle progress dengan throttling."""
+        is_new_tracker = job_db_id not in self._progress_trackers
+        if is_new_tracker:
+            self._progress_trackers[job_db_id] = ProgressTracker(total=total, processed=processed)
+        
+        tracker = self._progress_trackers[job_db_id]
+        tracker.total = total
+        tracker.processed = processed
+        
+        if is_new_tracker or tracker.should_update_db():
+            await self._update_job_progress(job_db_id, total, processed)
+            tracker.mark_db_updated()
+        
+        self._append_job_log(job_db_id, logging.INFO, f"Progress: {sinta_id} ({processed}/{total})")
+        logger.info("scraping_progress", extra={"job_id": job_id, "sinta_id": sinta_id, "processed": processed, "total": total})
 
     async def _fail_job(self, job_id: str, job_db_id: Optional[int], error: str) -> None:
         async with async_session_maker() as session:
@@ -228,38 +270,49 @@ class ScrapingService:
                     status=JobStatus.FAILED,
                     finished_at=datetime.utcnow(),
                     error_message=error,
+                    run_logs=self._job_log_buffers.get(job_db_id, []),
                 )
             )
-            if job_db_id is not None:
-                session.add(ScrapingLog(
-                    job_id=job_db_id,
-                    level=LogLevel.ERROR,
-                    message=f"Job failed: {error}",
-                    created_at=datetime.utcnow(),
-                ))
             await session.commit()
+
+        if job_db_id is not None:
+            self._progress_trackers.pop(job_db_id, None)
+            self._job_log_buffers.pop(job_db_id, None)
 
     async def _log(
         self,
         job_db_id: int,
         job_id: str,
         message: str,
-        level: LogLevel = LogLevel.INFO,
+        level: int = logging.INFO,
     ) -> None:
-        """Append a log entry to the main DB and emit to Python logger."""
-        async with async_session_maker() as session:
-            session.add(ScrapingLog(
-                job_id=job_db_id,
-                level=level,
-                message=message,
-                created_at=datetime.utcnow(),
-            ))
-            await session.commit()
+        """Emit application logs and collect per-job logs for final DB persistence."""
+        self._append_job_log(job_db_id, level, message)
+        logger.log(level, message, extra={"job_id": job_id, "job_db_id": job_db_id})
 
-        logger.log(
-            getattr(logging, level.value, logging.INFO),
-            message,
-            extra={"job_id": job_id},
+    def _append_job_log(self, job_db_id: int, level: int, message: str) -> None:
+        """Append log entry to in-memory per-job buffer with size guard."""
+        if job_db_id not in self._job_log_buffers:
+            self._job_log_buffers[job_db_id] = []
+
+        logs = self._job_log_buffers[job_db_id]
+        if len(logs) >= MAX_JOB_LOG_ENTRIES:
+            if logs and logs[-1].get("message") != "Log truncated due to max entries limit.":
+                logs.append(
+                    {
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "level": "WARNING",
+                        "message": "Log truncated due to max entries limit.",
+                    }
+                )
+            return
+
+        logs.append(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "level": logging.getLevelName(level),
+                "message": message,
+            }
         )
 
     # -----------------------------------------------------------------------
@@ -274,22 +327,146 @@ class ScrapingService:
     ) -> int:
         """
         Persist SINTA articles to the scraping DB in bounded batches.
-        Duplicate (id_sinta, source, article_title) rows are updated in-place.
+        Duplicate (id_sinta, article_title) rows from different views are merged.
         """
         total_saved = 0
         buffer: List[Dict[str, Any]] = []
+        merged_items: Dict[tuple[int, str], Dict[str, Any]] = {}
 
         for item in articles_data:
             row = {k: v for k, v in item.items() if k != "profile_url"}
-            buffer.append(row)
+
+            key = self._article_merge_key(row)
+            if key is None:
+                # Keep rows with missing merge keys untouched.
+                buffer.append(row)
+            elif key in merged_items:
+                self._merge_article_data(merged_items[key], row)
+            else:
+                merged_items[key] = dict(row)
+
+            if len(buffer) + len(merged_items) >= ARTICLE_BATCH_SIZE:
+                if merged_items:
+                    buffer.extend(merged_items.values())
+                    merged_items.clear()
             if len(buffer) >= ARTICLE_BATCH_SIZE:
                 total_saved += await self._flush_article_batch(buffer)
                 buffer.clear()
+
+        if merged_items:
+            buffer.extend(merged_items.values())
 
         if buffer:
             total_saved += await self._flush_article_batch(buffer)
 
         return total_saved
+
+    @staticmethod
+    def _article_merge_key(row: Dict[str, Any]) -> Optional[tuple[int, str]]:
+        """Build merge key for cross-view article deduplication."""
+        id_sinta = row.get("id_sinta")
+        title = row.get("article_title")
+        if id_sinta is None or not title:
+            return None
+        normalized_title = re.sub(r"\s+", " ", str(title).strip().lower())
+        if not normalized_title:
+            return None
+        return int(id_sinta), normalized_title
+
+    @staticmethod
+    def _is_empty(value: Any) -> bool:
+        return value is None or (isinstance(value, str) and value.strip() == "")
+
+    @staticmethod
+    def _split_sources(value: Any) -> List[str]:
+        """Split persisted source label into normalized source tokens."""
+        if value is None:
+            return []
+        text = str(value).strip().lower()
+        if not text:
+            return []
+        tokens = re.split(r"\s*(?:,|\||/|&|dan)\s*", text)
+        valid_tokens: List[str] = []
+        for token in tokens:
+            if token in SOURCE_PRIORITY and token not in valid_tokens:
+                valid_tokens.append(token)
+        return valid_tokens
+
+    def _merge_article_data(self, base: Dict[str, Any], incoming: Dict[str, Any]) -> None:
+        """
+        Merge article data from different SINTA views.
+
+        Rules:
+        - Fill only fields that are currently null/empty.
+        - Prefer `quartile` from scopus view.
+        - Prefer `sinta_rank` from garuda view.
+        - Keep the highest-priority source label.
+        """
+        incoming_source = (incoming.get("source") or "").strip().lower()
+        incoming_quartile = incoming.get("quartile")
+        incoming_sinta_rank = incoming.get("sinta_rank")
+        incoming_publisher = incoming.get("publisher")
+        incoming_authors = incoming.get("authors")
+        incoming_doi = incoming.get("doi")
+        incoming_scraped_at = incoming.get("scraped_at")
+
+        # Keep a merged source label so we can track which views contributed.
+        merged_sources = self._split_sources(base.get("source"))
+        if incoming_source in SOURCE_PRIORITY and incoming_source not in merged_sources:
+            merged_sources.append(incoming_source)
+
+        if merged_sources:
+            merged_sources = sorted(
+                merged_sources,
+                key=lambda src: SOURCE_PRIORITY.get(src, 0),
+                reverse=True,
+            )
+            # Keep max two highest-priority sources to stay compact.
+            base["source"] = ",".join(merged_sources[:2])
+
+        # Generic merge: fill missing scalar values only.
+        fill_fields = ["year", "cited", "url"]
+        for field_name in fill_fields:
+            if self._is_empty(base.get(field_name)) and not self._is_empty(incoming.get(field_name)):
+                base[field_name] = incoming.get(field_name)
+
+        # Scopus is authoritative for quartile.
+        if incoming_source == "scopus":
+            if not self._is_empty(incoming_quartile):
+                base["quartile"] = incoming_quartile
+        elif self._is_empty(base.get("quartile")) and not self._is_empty(incoming_quartile):
+            base["quartile"] = incoming_quartile
+
+        # Garuda is authoritative for SINTA rank.
+        if incoming_source == "garuda":
+            if incoming_sinta_rank is not None:
+                base["sinta_rank"] = incoming_sinta_rank
+            if not self._is_empty(incoming_doi):
+                base["doi"] = incoming_doi
+        elif base.get("sinta_rank") is None and incoming_sinta_rank is not None:
+            base["sinta_rank"] = incoming_sinta_rank
+            if self._is_empty(base.get("doi")) and not self._is_empty(incoming_doi):
+                base["doi"] = incoming_doi
+        
+        # Google Scholar is authoritative for publisher information.
+        if incoming_source == "googlescholar":
+            if not self._is_empty(incoming_publisher):
+                base["publisher"] = incoming_publisher
+            if not self._is_empty(incoming_authors):
+                base["authors"] = incoming_authors
+        else:
+            if self._is_empty(base.get("publisher")) and not self._is_empty(incoming_publisher):
+                base["publisher"] = incoming_publisher
+            if self._is_empty(base.get("authors")) and not self._is_empty(incoming_authors):
+                base["authors"] = incoming_authors
+
+        # Fallback DOI fill for non-garuda sources.
+        if self._is_empty(base.get("doi")) and not self._is_empty(incoming_doi):
+            base["doi"] = incoming_doi
+
+        # Keep latest scrape timestamp.
+        if incoming_scraped_at is not None:
+            base["scraped_at"] = incoming_scraped_at
 
     async def _flush_article_batch(self, batch: List[Dict[str, Any]]) -> int:
         """INSERT or UPDATE a single batch of articles in the scraping DB."""
@@ -297,20 +474,83 @@ class ScrapingService:
             return 0
 
         async with async_session_maker() as session:
-            stmt = mysql_insert(SintaArticle).values(batch)
-            stmt = stmt.on_duplicate_key_update(
-                authors=stmt.inserted.authors,
-                publisher=stmt.inserted.publisher,
-                year=stmt.inserted.year,
-                cited=stmt.inserted.cited,
-                quartile=stmt.inserted.quartile,
-                url=stmt.inserted.url,
-                scraped_at=stmt.inserted.scraped_at,
-            )
-            await session.execute(stmt)
+            keyed_rows: Dict[tuple[int, str], Dict[str, Any]] = {}
+            keyless_rows: List[Dict[str, Any]] = []
+            for row in batch:
+                key = self._article_merge_key(row)
+                if key is None:
+                    keyless_rows.append(row)
+                    continue
+                if key in keyed_rows:
+                    self._merge_article_data(keyed_rows[key], row)
+                else:
+                    keyed_rows[key] = dict(row)
+
+            existing_by_key: Dict[tuple[int, str], SintaArticle] = {}
+            if keyed_rows:
+                id_values = list({key[0] for key in keyed_rows.keys()})
+                title_values = [row["article_title"] for row in keyed_rows.values() if row.get("article_title")]
+                if id_values and title_values:
+                    existing_result = await session.execute(
+                        select(SintaArticle).where(
+                            SintaArticle.id_sinta.in_(id_values),
+                            SintaArticle.article_title.in_(title_values),
+                        )
+                    )
+                    for existing in existing_result.scalars().all():
+                        existing_key = self._article_merge_key(
+                            {"id_sinta": existing.id_sinta, "article_title": existing.article_title}
+                        )
+                        if existing_key is not None and existing_key not in existing_by_key:
+                            existing_by_key[existing_key] = existing
+
+            to_insert: List[SintaArticle] = []
+            written = 0
+
+            for key, incoming in keyed_rows.items():
+                existing = existing_by_key.get(key)
+                if existing is None:
+                    to_insert.append(SintaArticle(**incoming))
+                    written += 1
+                    continue
+
+                base = {
+                    "source": existing.source,
+                    "authors": existing.authors,
+                    "publisher": existing.publisher,
+                    "year": existing.year,
+                    "cited": existing.cited,
+                    "doi": existing.doi,
+                    "quartile": existing.quartile,
+                    "sinta_rank": existing.sinta_rank,
+                    "url": existing.url,
+                    "scraped_at": existing.scraped_at,
+                }
+                self._merge_article_data(base, incoming)
+
+                existing.source = base.get("source")
+                existing.authors = base.get("authors")
+                existing.publisher = base.get("publisher")
+                existing.year = base.get("year")
+                existing.cited = base.get("cited")
+                existing.doi = base.get("doi")
+                existing.quartile = base.get("quartile")
+                existing.sinta_rank = base.get("sinta_rank")
+                existing.url = base.get("url")
+                existing.scraped_at = base.get("scraped_at")
+                written += 1
+
+            if keyless_rows:
+                for row in keyless_rows:
+                    to_insert.append(SintaArticle(**row))
+                    written += 1
+
+            if to_insert:
+                session.add_all(to_insert)
+
             await session.commit()
 
-        return len(batch)
+        return written
 
     async def _save_authors(
         self,

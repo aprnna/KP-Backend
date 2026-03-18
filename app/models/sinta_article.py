@@ -32,10 +32,21 @@ class SintaArticle(Base):
     authors: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     publisher: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     year: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
-    cited: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    cited: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     quartile: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
+    doi: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sinta_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pdf_link: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    raw_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    issn: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    issn_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    indexed_date_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    indexed_date_parts: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    short_journal_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    journal_title: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    issue: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    volume: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     # Timestamp recorded when the row was scraped
     scraped_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True, default=datetime.utcnow

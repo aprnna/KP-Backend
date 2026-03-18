@@ -27,8 +27,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def job_to_schema(job) -> JobSchema:
-    """Convert ScrapingJob model to JobSchema."""
+def job_to_schema(job, run_logs_limit: Optional[int] = None) -> JobSchema:
+    """Convert ScrapingJob model to JobSchema with optional run_logs trimming."""
+    run_logs = job.run_logs
+    if run_logs_limit is not None and run_logs:
+        run_logs = run_logs[-run_logs_limit:]
+
     return JobSchema(
         job_id=job.job_id,
         source=JobSourceEnum(job.source.value),
@@ -42,11 +46,12 @@ def job_to_schema(job) -> JobSchema:
         duration_seconds=job.duration_seconds,
         error_message=job.error_message,
         parameters=job.parameters,
+        run_logs=run_logs,
     )
 
 
 def log_to_schema(log) -> JobLogSchema:
-    """Convert ScrapingLog model to JobLogSchema."""
+    """Convert a log-like object to JobLogSchema."""
     return JobLogSchema(
         id=log.id,
         level=log.level.value if hasattr(log.level, 'value') else str(log.level),
@@ -82,6 +87,12 @@ async def list_jobs(
         ge=0,
         description="Offset for pagination"
     ),
+    logs_limit: int = Query(
+        20,
+        ge=0,
+        le=200,
+        description="Number of latest run_logs entries to include per job in list response (0 to disable)."
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -102,7 +113,8 @@ async def list_jobs(
         offset=offset,
     )
     
-    job_schemas = [job_to_schema(job) for job in jobs]
+    # Keep list response lightweight by returning only the latest N logs per job.
+    job_schemas = [job_to_schema(job, run_logs_limit=logs_limit) for job in jobs]
     
     return JobListResponse(
         jobs=job_schemas,

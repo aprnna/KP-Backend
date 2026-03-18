@@ -36,7 +36,7 @@ async def list_sinta_articles(
     """
     offset = (page - 1) * size
     query = select(SintaArticle)
-    if sinta_id:
+    if sinta_id is not None:
         query = query.where(SintaArticle.id_sinta == sinta_id)
         
     query = query.limit(size).offset(offset)

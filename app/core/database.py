@@ -83,7 +83,7 @@ async def init_db():
     """
     async with engine.begin() as conn:
         # Import all models so their tables are registered in Base.metadata.
-        from app.models import job, raw_response, SintaArticle, SintaAuthor 
+        from app.models import job, SintaArticle, SintaAuthor 
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables created successfully")
 

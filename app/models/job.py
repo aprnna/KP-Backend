@@ -3,11 +3,11 @@ Scraping Job and Log models for tracking scraping operations.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from sqlalchemy import (
-    Integer, String, Text, DateTime, Enum, JSON, ForeignKey
+    Integer, String, Text, DateTime, Enum, JSON
 )
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 import enum
 
 from app.core.database import Base
@@ -29,7 +29,7 @@ class JobSource(str, enum.Enum):
 
 
 class LogLevel(str, enum.Enum):
-    """Log level for scraping logs"""
+    """Log level enum retained for compatibility (no DB log persistence)."""
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -75,19 +75,10 @@ class ScrapingJob(Base):
     
     # Job parameters (stored as JSON)
     parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    
-    # Relationships
-    logs: Mapped[List["ScrapingLog"]] = relationship(
-        "ScrapingLog", 
-        back_populates="job",
-        cascade="all, delete-orphan"
-    )
-    raw_responses: Mapped[List["RawResponse"]] = relationship(
-        "RawResponse",
-        back_populates="job",
-        cascade="all, delete-orphan"
-    )
 
+    # Aggregated logs stored once when job completes/fails
+    run_logs: Mapped[Optional[list[dict]]] = mapped_column(JSON, nullable=True)
+    
     @property
     def progress_percentage(self) -> float:
         """Calculate progress percentage"""
@@ -105,36 +96,3 @@ class ScrapingJob(Base):
 
     def __repr__(self) -> str:
         return f"<ScrapingJob(job_id={self.job_id}, status={self.status}, progress={self.progress_percentage:.1f}%)>"
-
-
-class ScrapingLog(Base):
-    """
-    Model for storing scraping logs.
-    Each log entry is associated with a scraping job.
-    """
-    __tablename__ = "scraping_logs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    job_id: Mapped[int] = mapped_column(
-        Integer, 
-        ForeignKey("scraping_jobs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
-    level: Mapped[str] = mapped_column(
-        Enum(LogLevel, values_callable=lambda x: [e.value for e in x]),
-        default=LogLevel.INFO
-    )
-    message: Mapped[str] = mapped_column(Text, nullable=False)
-    extra_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    # Relationships
-    job: Mapped["ScrapingJob"] = relationship("ScrapingJob", back_populates="logs")
-
-    def __repr__(self) -> str:
-        return f"<ScrapingLog(level={self.level}, message={self.message[:50]}...)>"
-
-
-# Import RawResponse here to avoid circular import
-from app.models.raw_response import RawResponse  # noqa: E402, F401

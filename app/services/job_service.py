@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy import func, select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.job import ScrapingJob, ScrapingLog, JobStatus, JobSource, LogLevel
+from app.models.job import ScrapingJob, JobStatus, JobSource
 
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,6 @@ class JobService:
     Provides methods for:
     - Creating new jobs
     - Updating job status and progress
-    - Adding logs to job records
     - Querying and listing jobs
     - Enforcing single-job concurrency via SELECT FOR UPDATE guard
     """
@@ -79,14 +78,6 @@ class JobService:
 
         logger.info("job_created", extra={"job_id": job.job_id, "source": source})
 
-        # Add initial log entry so the job has context from creation
-        await self.add_log(
-            job.id,
-            LogLevel.INFO,
-            f"Job created with source={source}",
-            {"parameters": parameters},
-        )
-
         return job
 
     async def start_job(self, job_id: str) -> Optional[ScrapingJob]:
@@ -107,8 +98,6 @@ class JobService:
         job.started_at = datetime.utcnow()
 
         await self.db.flush()
-
-        await self.add_log(job.id, LogLevel.INFO, "Job started")
 
         logger.info("job_started", extra={"job_id": job_id})
         return job
@@ -166,12 +155,6 @@ class JobService:
 
         await self.db.flush()
 
-        await self.add_log(
-            job.id,
-            LogLevel.INFO,
-            f"Job finished successfully with {total_processed} records processed",
-        )
-
         logger.info(
             "job_finished",
             extra={"job_id": job_id, "total_records": total_processed},
@@ -203,45 +186,8 @@ class JobService:
 
         await self.db.flush()
 
-        await self.add_log(
-            job.id,
-            LogLevel.ERROR,
-            f"Job failed: {error_message}",
-        )
-
         logger.error("job_failed", extra={"job_id": job_id, "error": error_message})
         return job
-
-    async def add_log(
-        self,
-        job_db_id: int,
-        level: LogLevel,
-        message: str,
-        extra_data: Optional[Dict[str, Any]] = None,
-    ) -> ScrapingLog:
-        """
-        Add log entry for a job.
-
-        Args:
-            job_db_id: Database ID (integer PK) of the job
-            level: Log level
-            message: Log message
-            extra_data: Additional data (JSON)
-
-        Returns:
-            Created ScrapingLog instance
-        """
-        log = ScrapingLog(
-            job_id=job_db_id,
-            level=level,
-            message=message,
-            extra_data=extra_data,
-            created_at=datetime.utcnow(),
-        )
-
-        self.db.add(log)
-        await self.db.flush()
-        return log
 
     async def get_job_by_uuid(self, job_id: str) -> Optional[ScrapingJob]:
         """
@@ -260,7 +206,7 @@ class JobService:
 
     async def get_job_with_logs(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get job with its most recent logs.
+        Get job with logs payload.
 
         Args:
             job_id: Job UUID
@@ -272,15 +218,7 @@ class JobService:
         if not job:
             return None
 
-        result = await self.db.execute(
-            select(ScrapingLog)
-            .where(ScrapingLog.job_id == job.id)
-            .order_by(desc(ScrapingLog.created_at))
-            .limit(100)
-        )
-        logs = result.scalars().all()
-
-        return {"job": job, "logs": logs}
+        return {"job": job, "logs": []}
 
     async def list_jobs(
         self,
