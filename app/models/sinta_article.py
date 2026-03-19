@@ -24,8 +24,8 @@ class SintaArticle(Base):
     # Author link — references id_sinta in the main DB
     id_sinta: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 
-    # SINTA view source: scopus | garuda | googlescholar | rama
-    source: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # SINTA view source: scopus | garuda | googlescholar | rama | crossref
+    source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Article metadata as scraped from SINTA HTML
     article_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

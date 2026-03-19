@@ -14,6 +14,7 @@ Two-phase scraping per run:
 
 import asyncio
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -43,6 +44,53 @@ METRICS_MAPPING_GSCHOLAR: Dict[str, str] = {
     "h-index": "s_hindex_gscholar",
     "i10-Index": "s_i10_index_gscholar",
     "G-Index": "s_gindex_gscholar",
+}
+
+FACULTY_MAPPING: Dict[str, List[str]] = {
+    "Fakultas Teknik dan Ilmu Komputer": [
+        "Teknik Informatika",
+        "Sistem Informasi",
+        "Sistem Komputer",
+        "Teknik Komputer",
+        "Teknik Elektro",
+        "Teknik Industri",
+        "Teknik Sipil",
+        "Teknik Arsitektur",
+        "Teknik Perencanaan Wilayah Dan Kota",
+        "Manajemen Informatika",
+        "Komputerisasi Akuntansi",
+    ],
+    "Fakultas Ekonomi dan Bisnis": [
+        "Manajemen",
+        "Akuntansi",
+        "Manajemen Pemasaran",
+        "Keuangan Dan Perbankan",
+    ],
+    "Fakultas Ilmu Sosial dan Ilmu Politik": [
+        "Ilmu Komunikasi",
+        "Ilmu Pemerintahan",
+        "Ilmu Hubungan Internasional",
+    ],
+    "Fakultas Sastra": [
+        "Sastra Inggris",
+        "Sastra Jepang",
+    ],
+    "Fakultas Desain": [
+        "Desain Komunikasi Visual",
+        "Desain Interior",
+    ],
+    "Fakultas Hukum": [
+        "Ilmu Hukum",
+    ],
+    "Fakultas Pascasarjana": [
+        "Magister Manajemen Sistem Informasi",
+        "Magister Desain",
+        "Magister Manajemen",
+        "Magister Perencanaan Wilayah dan Kota",
+        "Magister Teknik Informatika",
+        "Magister Ilmu Hubungan Internasional",
+        "Magister Sistem Informasi",
+    ],
 }
 
 
@@ -122,7 +170,11 @@ class SintaAuthorScraper(BaseScraper):
             profile_url = name_tag.get("href") if name_tag else None
 
             dept_div = card.find("div", class_="profile-dept")
-            major = dept_div.get_text(strip=True) if dept_div else None
+            raw_major = dept_div.get_text(strip=True) if dept_div else None
+            
+            # Split "Major (Degree)" -> "Major" and "Degree"
+            major, degree = self._extract_major_degree(raw_major)
+            faculty = self._map_faculty(major)
 
             id_div = card.find("div", class_="profile-id")
             raw_id = id_div.get_text(strip=True).replace("ID :", "").strip() if id_div else None
@@ -150,6 +202,8 @@ class SintaAuthorScraper(BaseScraper):
                 "id_sinta": id_sinta,
                 "fullname": fullname,
                 "major": major,
+                "degree": degree,
+                "faculty": faculty,
                 "profile_url": profile_url,
                 "sinta_score_overall": sinta_score,
                 "sinta_score_3yr": sinta_score_3yr,
@@ -158,6 +212,29 @@ class SintaAuthorScraper(BaseScraper):
             })
 
         return results
+
+    @staticmethod
+    def _extract_major_degree(raw_major: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        """Split 'Major (Degree)' into ('Major', 'Degree')."""
+        if not raw_major:
+            return None, None
+        
+        # Matches "Something (S1)", "Something (S2)", etc.
+        match = re.search(r"^(.*?)\s*\((.*?)\)$", raw_major)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+        return raw_major.strip(), None
+
+    @staticmethod
+    def _map_faculty(major: Optional[str]) -> Optional[str]:
+        """Map a major to its corresponding faculty using FACULTY_MAPPING."""
+        if not major:
+            return None
+            
+        for faculty, majors in FACULTY_MAPPING.items():
+            if major in majors:
+                return faculty
+        return None
 
     async def scrape_affiliation_list(self, job_id: str = None) -> List[Dict[str, Any]]:
         """

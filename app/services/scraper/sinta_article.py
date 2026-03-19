@@ -87,6 +87,101 @@ class SintaArticleScraper(BaseScraper):
                 await asyncio.sleep(2 ** attempt)
         return ""
 
+    @staticmethod
+    def _extract_profile_author_name(soup: BeautifulSoup) -> Optional[str]:
+        """Best-effort extraction of profile owner's name from page header."""
+        selectors = [
+            ".au-name",
+            ".author-name",
+            ".profile-name",
+            ".caption h3",
+            "h3",
+        ]
+        for selector in selectors:
+            tag = soup.select_one(selector)
+            if not tag:
+                continue
+            name = tag.get_text(" ", strip=True)
+            if name and len(name) <= 120:
+                return name
+        return None
+
+    @staticmethod
+    def _normalize_cited(value: Optional[str]) -> Optional[str]:
+        """Extract numeric cited count (e.g. '2 cited' -> '2')."""
+        if not value:
+            return None
+        match = re.search(r"\d+", value)
+        return match.group(0) if match else None
+
+    @staticmethod
+    def _normalize_doi(value: Optional[str]) -> Optional[str]:
+        """Extract DOI and trim common prefixes from mixed text."""
+        if not value:
+            return None
+
+        text = value.strip()
+
+        # Remove common DOI labels and URL prefixes.
+        text = re.sub(r"(?i)^doi\s*[:\-]?\s*", "", text)
+        text = re.sub(r"(?i)^https?://(?:dx\.)?doi\.org/", "", text)
+
+        # Extract canonical DOI pattern if present.
+        match = re.search(r"10\.\d{4,9}/\S+", text)
+        if match:
+            return match.group(0).rstrip(".,;)")
+
+        return text or None
+
+    @staticmethod
+    def _normalize_sinta_rank(value: Optional[str]) -> Optional[int]:
+        """Extract numeric SINTA rank (e.g. 'Accred : Sinta 4' -> 4)."""
+        if not value:
+            return None
+
+        match = re.search(r"(?i)sinta\s*(\d+)", value)
+        if match:
+            return int(match.group(1))
+
+        # Fallback: any number in accreditation text.
+        fallback = re.search(r"\d+", value)
+        if fallback:
+            try:
+                return int(fallback.group(0))
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _normalize_authors(value: Optional[str], owner_name: Optional[str]) -> Optional[str]:
+        """Normalize author list into semicolon-separated format."""
+        if not value:
+            return None
+
+        text = value.strip()
+
+        # Pattern: "Author Order : X of N" -> put owner name at position X.
+        if re.search(r"(?i)author\s*order", text):
+            order_match = re.search(r"(?i)author\s*order\s*:?\s*(\d+)", text)
+            total_match = re.search(r"(?i)of\s*(\d+)", text)
+            author_order = int(order_match.group(1)) if order_match else 1
+            total_authors = int(total_match.group(1)) if total_match else 1
+            author_order = max(author_order, 1)
+            total_authors = max(total_authors, 1)
+            author_order = min(author_order, total_authors)
+
+            display_name = (owner_name or "unknown").strip() or "unknown"
+            author_list = ["unknown"] * total_authors
+            author_list[author_order - 1] = display_name
+            return "; ".join(author_list)
+
+        # Convert comma-separated names to semicolon-separated names.
+        names = [part.strip() for part in text.split(",") if part.strip()]
+        if names:
+            return "; ".join(names)
+
+        return text or None
+
     def _parse_article_items(
         self, html: str, id_sinta: int, view: str
     ) -> List[Dict[str, Any]]:
@@ -98,97 +193,7 @@ class SintaArticleScraper(BaseScraper):
         items = soup.select(".ar-list-item")
         results: List[Dict[str, Any]] = []
 
-        def extract_profile_author_name() -> Optional[str]:
-            """Best-effort extraction of profile owner's name from page header."""
-            selectors = [
-                ".au-name",
-                ".author-name",
-                ".profile-name",
-                ".caption h3",
-                "h3",
-            ]
-            for selector in selectors:
-                tag = soup.select_one(selector)
-                if not tag:
-                    continue
-                name = tag.get_text(" ", strip=True)
-                if name and len(name) <= 120:
-                    return name
-            return None
-
-        def normalize_cited(value: Optional[str]) -> Optional[str]:
-            """Extract numeric cited count (e.g. '2 cited' -> '2')."""
-            if not value:
-                return None
-            match = re.search(r"\d+", value)
-            return match.group(0) if match else None
-
-        def normalize_doi(value: Optional[str]) -> Optional[str]:
-            """Extract DOI and trim common prefixes from mixed text."""
-            if not value:
-                return None
-
-            text = value.strip()
-
-            # Remove common DOI labels and URL prefixes.
-            text = re.sub(r"(?i)^doi\s*[:\-]?\s*", "", text)
-            text = re.sub(r"(?i)^https?://(?:dx\.)?doi\.org/", "", text)
-
-            # Extract canonical DOI pattern if present.
-            match = re.search(r"10\.\d{4,9}/\S+", text)
-            if match:
-                return match.group(0).rstrip(".,;)")
-
-            return text or None
-
-        def normalize_sinta_rank(value: Optional[str]) -> Optional[int]:
-            """Extract numeric SINTA rank (e.g. 'Accred : Sinta 4' -> 4)."""
-            if not value:
-                return None
-
-            match = re.search(r"(?i)sinta\s*(\d+)", value)
-            if match:
-                return int(match.group(1))
-
-            # Fallback: any number in accreditation text.
-            fallback = re.search(r"\d+", value)
-            if fallback:
-                try:
-                    return int(fallback.group(0))
-                except ValueError:
-                    return None
-            return None
-
-        def normalize_authors(value: Optional[str], owner_name: Optional[str]) -> Optional[str]:
-            """Normalize author list into semicolon-separated format."""
-            if not value:
-                return None
-
-            text = value.strip()
-
-            # Pattern: "Author Order : X of N" -> put owner name at position X.
-            if re.search(r"(?i)author\s*order", text):
-                order_match = re.search(r"(?i)author\s*order\s*:?\s*(\d+)", text)
-                total_match = re.search(r"(?i)of\s*(\d+)", text)
-                author_order = int(order_match.group(1)) if order_match else 1
-                total_authors = int(total_match.group(1)) if total_match else 1
-                author_order = max(author_order, 1)
-                total_authors = max(total_authors, 1)
-                author_order = min(author_order, total_authors)
-
-                display_name = (owner_name or "unknown").strip() or "unknown"
-                author_list = ["unknown"] * total_authors
-                author_list[author_order - 1] = display_name
-                return "; ".join(author_list)
-
-            # Convert comma-separated names to semicolon-separated names.
-            names = [part.strip() for part in text.split(",") if part.strip()]
-            if names:
-                return "; ".join(names)
-
-            return text or None
-
-        profile_author_name = extract_profile_author_name()
+        profile_author_name = self._extract_profile_author_name(soup)
 
         for item in items:
             # Title + link
@@ -203,7 +208,7 @@ class SintaArticleScraper(BaseScraper):
             # Cited count
             cited_tag = item.select_one(".ar-cited")
             cited_raw = cited_tag.get_text(strip=True) if cited_tag else None
-            cited = normalize_cited(cited_raw)
+            cited = self._normalize_cited(cited_raw)
 
             # Quartile / accreditation
             quartile_tag = item.select_one(".ar-quartile")
@@ -221,7 +226,7 @@ class SintaArticleScraper(BaseScraper):
                     authors_str = text.replace("Authors :", "").strip()
                 elif "Author Order" in text:
                     authors_str = text.strip()
-            authors_str = normalize_authors(authors_str, profile_author_name)
+            authors_str = self._normalize_authors(authors_str, profile_author_name)
 
             row = {
                 "id_sinta": id_sinta,
@@ -240,9 +245,9 @@ class SintaArticleScraper(BaseScraper):
 
             if view == "garuda":
                 row["cited"] = None
-                row["doi"] = normalize_doi(cited_raw)
+                row["doi"] = self._normalize_doi(cited_raw)
                 row["quartile"] = None
-                row["sinta_rank"] = normalize_sinta_rank(quartile)
+                row["sinta_rank"] = self._normalize_sinta_rank(quartile)
 
             results.append(row)
         return results

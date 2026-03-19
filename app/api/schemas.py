@@ -215,6 +215,16 @@ class SintaArticleResponse(BaseModel):
     doi: Optional[str]
     sinta_rank: Optional[int]
     scraped_at: Optional[datetime]
+    pdf_link: Optional[str]
+    raw_type: Optional[str]
+    issn: Optional[str]
+    issn_type: Optional[str]
+    indexed_date_time: Optional[datetime]
+    indexed_date_parts: Optional[str]
+    short_journal_title: Optional[str]
+    journal_title: Optional[str]
+    volume: Optional[str]
+    issue: Optional[str]
 
     class Config:
         from_attributes = True
@@ -243,6 +253,9 @@ class SintaAuthorResponse(BaseModel):
     s_gindex_gscholar: Optional[int]
     subject_research: Optional[str]
     scraped_at: Optional[datetime]
+    degree: Optional[str]
+    faculty: Optional[str]
+    
 
     class Config:
         from_attributes = True

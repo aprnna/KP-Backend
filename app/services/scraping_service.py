@@ -28,13 +28,14 @@ from app.models.sinta_article import SintaArticle
 from app.models.sinta_author import SintaAuthor
 from app.services.scraper.sinta_article import SintaArticleScraper
 from app.services.scraper.sinta_author import SintaAuthorScraper
+from app.services.scraper.crossref_article import CrossrefScraper
 
 
 logger = logging.getLogger(__name__)
 
 ARTICLE_BATCH_SIZE = 200
 MAX_JOB_LOG_ENTRIES = 5000
-SOURCE_PRIORITY = {"rama": 1, "googlescholar": 2, "garuda": 3, "scopus": 4}
+SOURCE_PRIORITY = {"rama": 1, "googlescholar": 2, "garuda": 3, "scopus": 4, "crossref": 5}
 
 
 # ---------------------------------------------------------------------------
@@ -94,61 +95,13 @@ class ScrapingService:
             # Check if user explicitly passed custom SINTA IDs to scrape
             sinta_ids = params.get("sinta_ids") or []
             
-            # ----------------------------------------------------------------
-            # SINTA Author Scraping (Phase 1 & 2)
-            # ----------------------------------------------------------------
+            # Phase 1: SINTA Author Scraping
             if source in (JobSource.SINTA_AUTHORS, JobSource.BOTH):
-                await self._log(job_db_id, job_id, "Starting SINTA author profile scraping natively via Affiliation…")
+                sinta_ids = await self._scrape_authors_phase(job_id, job_db_id, metrics)
 
-                async with SintaAuthorScraper() as scraper:
-                    # sinta_ids=None triggers the scraper to fetch the full UNIKOM affiliation list first
-                    author_results = await scraper.scrape(
-                        sinta_ids=None,
-                        job_id=job_id,
-                        on_progress=lambda sid, p, t: asyncio.create_task(
-                            self._on_scraping_progress(job_db_id, job_id, sid, p, t)
-                        ),
-                    )
-
-                saved_authors = await self._save_authors(job_id, job_db_id, author_results)
-                metrics.total_authors_saved = saved_authors
-                
-                # Extract SINTA IDs for the article scraper if running BOTH
-                sinta_ids = [a.get("id_sinta") for a in author_results if a.get("id_sinta")]
-                metrics.total_sinta_ids = len(sinta_ids)
-
-                await self._log(
-                    job_db_id, job_id,
-                    f"Author scraping done: {saved_authors}/{len(author_results)} saved.",
-                )
-
-            # ----------------------------------------------------------------
-            # SINTA Article Scraping
-            # ----------------------------------------------------------------
+            # Phase 2: SINTA Article Scraping
             if source in (JobSource.SINTA_ARTICLES, JobSource.BOTH):
-                # If we didn't just scrape authors (i.e. running ARTICLES only),
-                # we need to load the list of SINTA IDs from the sinta_authors table.
-                if not sinta_ids:
-                    sinta_ids = await self._resolve_sinta_ids(job_id, job_db_id)
-                    metrics.total_sinta_ids = len(sinta_ids)
-
-                await self._log(job_db_id, job_id, f"Starting SINTA article scraping for {len(sinta_ids)} authors…")
-
-                async with SintaArticleScraper() as scraper:
-                    article_results = await scraper.scrape(
-                        sinta_ids=sinta_ids,
-                        job_id=job_id,
-                        on_progress=lambda sid, p, t: asyncio.create_task(
-                            self._on_scraping_progress(job_db_id, job_id, sid, p, t)
-                        ),
-                    )
-
-                total_saved = await self._save_articles_batched(job_id, job_db_id, article_results)
-                metrics.total_articles = total_saved
-                await self._log(
-                    job_db_id, job_id,
-                    f"Article scraping done: {len(article_results)} found, {total_saved} saved.",
-                )
+                await self._scrape_articles_phase(job_id, job_db_id, metrics, sinta_ids)
 
             # Finalize once, with source-aware totals.
             if source == JobSource.SINTA_AUTHORS:
@@ -174,6 +127,62 @@ class ScrapingService:
         except Exception as exc:
             logger.exception("scraping_job_failed", extra={"job_id": job_id, "error": str(exc)})
             await self._fail_job(job_id, job_db_id, str(exc))
+
+    async def _scrape_authors_phase(self, job_id: str, job_db_id: int, metrics: JobMetrics) -> List[int]:
+        """Handles the author scraping phase."""
+        await self._log(job_db_id, job_id, "Starting SINTA author profile scraping natively via Affiliation…")
+
+        async with SintaAuthorScraper() as scraper:
+            # sinta_ids=None triggers the scraper to fetch the full UNIKOM affiliation list first
+            author_results = await scraper.scrape(
+                sinta_ids=None,
+                job_id=job_id,
+                on_progress=lambda sid, p, t: asyncio.create_task(
+                    self._on_scraping_progress(job_db_id, job_id, sid, p, t)
+                ),
+            )
+
+        saved_authors = await self._save_authors(job_id, job_db_id, author_results)
+        metrics.total_authors_saved = saved_authors
+        
+        # Extract SINTA IDs for the article scraper
+        sinta_ids = [a.get("id_sinta") for a in author_results if a.get("id_sinta")]
+        metrics.total_sinta_ids = len(sinta_ids)
+
+        await self._log(
+            job_db_id, job_id,
+            f"Author scraping done: {saved_authors}/{len(author_results)} saved.",
+        )
+        return sinta_ids
+
+    async def _scrape_articles_phase(self, job_id: str, job_db_id: int, metrics: JobMetrics, sinta_ids: List[int]) -> None:
+        """Handles the article scraping and Crossref enrichment phase."""
+        # If we didn't just scrape authors, we need to load the list of SINTA IDs.
+        if not sinta_ids:
+            sinta_ids = await self._resolve_sinta_ids(job_id, job_db_id)
+            metrics.total_sinta_ids = len(sinta_ids)
+
+        await self._log(job_db_id, job_id, f"Starting SINTA article scraping for {len(sinta_ids)} authors…")
+
+        async with SintaArticleScraper() as scraper:
+            article_results = await scraper.scrape(
+                sinta_ids=sinta_ids,
+                job_id=job_id,
+                on_progress=lambda sid, p, t: asyncio.create_task(
+                    self._on_scraping_progress(job_db_id, job_id, sid, p, t)
+                ),
+            )
+
+        await self._log(job_db_id, job_id, f"Enriching {len(article_results)} articles with Crossref API…")
+        async with CrossrefScraper() as crossref_scraper:
+            await crossref_scraper.enrich_articles(article_results)
+
+        total_saved = await self._save_articles_batched(job_id, job_db_id, article_results)
+        metrics.total_articles = total_saved
+        await self._log(
+            job_db_id, job_id,
+            f"Article scraping done: {len(article_results)} found, {total_saved} saved.",
+        )
 
     # -----------------------------------------------------------------------
     # Main DB helpers
@@ -403,15 +412,20 @@ class ScrapingService:
         - Keep the highest-priority source label.
         """
         incoming_source = (incoming.get("source") or "").strip().lower()
-        incoming_quartile = incoming.get("quartile")
-        incoming_sinta_rank = incoming.get("sinta_rank")
-        incoming_publisher = incoming.get("publisher")
-        incoming_authors = incoming.get("authors")
-        incoming_doi = incoming.get("doi")
-        incoming_scraped_at = incoming.get("scraped_at")
 
-        # Keep a merged source label so we can track which views contributed.
-        merged_sources = self._split_sources(base.get("source"))
+        # 1. Merge sources prioritizing specific providers
+        base["source"] = self._merge_sources(base.get("source"), incoming_source)
+        
+        # 2. Fill generic scalar fields
+        self._merge_generic_fields(base, incoming)
+
+        # 3. Apply business rules for authoritative domains (e.g., Scopus, Garuda)
+        self._apply_source_specific_rules(base, incoming, incoming_source)
+
+    def _merge_sources(self, base_source: Any, incoming_source: str) -> str:
+        """Merge and prioritize source labels up to a safe database column limit."""
+        merged_sources = self._split_sources(base_source)
+        
         if incoming_source in SOURCE_PRIORITY and incoming_source not in merged_sources:
             merged_sources.append(incoming_source)
 
@@ -421,14 +435,39 @@ class ScrapingService:
                 key=lambda src: SOURCE_PRIORITY.get(src, 0),
                 reverse=True,
             )
-            # Keep max two highest-priority sources to stay compact.
-            base["source"] = ",".join(merged_sources[:2])
+            # Keep max two highest-priority sources to stay compact, 
+            # and fallback to 1 if taking two exceeds VARCHAR(20)
+            result_source = ",".join(merged_sources[:2])
+            if len(result_source) > 20:
+                result_source = merged_sources[0]
+            return result_source
+            
+        return base_source or ""
 
-        # Generic merge: fill missing scalar values only.
-        fill_fields = ["year", "cited", "url"]
+    def _merge_generic_fields(self, base: Dict[str, Any], incoming: Dict[str, Any]) -> None:
+        """Merge generic string/numeric fields if currently empty."""
+        fill_fields = [
+            "year", "cited", "url",
+            "pdf_link", "raw_type", "issn", "issn_type",
+            "indexed_date_time", "indexed_date_parts", "short_journal_title",
+            "journal_title", "issue", "volume"
+        ]
         for field_name in fill_fields:
             if self._is_empty(base.get(field_name)) and not self._is_empty(incoming.get(field_name)):
                 base[field_name] = incoming.get(field_name)
+
+        # Keep latest scrape timestamp.
+        incoming_scraped_at = incoming.get("scraped_at")
+        if incoming_scraped_at is not None:
+            base["scraped_at"] = incoming_scraped_at
+
+    def _apply_source_specific_rules(self, base: Dict[str, Any], incoming: Dict[str, Any], incoming_source: str) -> None:
+        """Apply business rules where certain sources are authoritative for specific fields."""
+        incoming_quartile = incoming.get("quartile")
+        incoming_sinta_rank = incoming.get("sinta_rank")
+        incoming_publisher = incoming.get("publisher")
+        incoming_authors = incoming.get("authors")
+        incoming_doi = incoming.get("doi")
 
         # Scopus is authoritative for quartile.
         if incoming_source == "scopus":
@@ -463,10 +502,6 @@ class ScrapingService:
         # Fallback DOI fill for non-garuda sources.
         if self._is_empty(base.get("doi")) and not self._is_empty(incoming_doi):
             base["doi"] = incoming_doi
-
-        # Keep latest scrape timestamp.
-        if incoming_scraped_at is not None:
-            base["scraped_at"] = incoming_scraped_at
 
     async def _flush_article_batch(self, batch: List[Dict[str, Any]]) -> int:
         """INSERT or UPDATE a single batch of articles in the scraping DB."""
@@ -525,6 +560,16 @@ class ScrapingService:
                     "sinta_rank": existing.sinta_rank,
                     "url": existing.url,
                     "scraped_at": existing.scraped_at,
+                    "pdf_link": existing.pdf_link,
+                    "raw_type": existing.raw_type,
+                    "issn": existing.issn,
+                    "issn_type": existing.issn_type,
+                    "indexed_date_time": existing.indexed_date_time,
+                    "indexed_date_parts": existing.indexed_date_parts,
+                    "short_journal_title": existing.short_journal_title,
+                    "journal_title": existing.journal_title,
+                    "issue": existing.issue,
+                    "volume": existing.volume,
                 }
                 self._merge_article_data(base, incoming)
 
@@ -538,6 +583,16 @@ class ScrapingService:
                 existing.sinta_rank = base.get("sinta_rank")
                 existing.url = base.get("url")
                 existing.scraped_at = base.get("scraped_at")
+                existing.pdf_link = base.get("pdf_link")
+                existing.raw_type = base.get("raw_type")
+                existing.issn = base.get("issn")
+                existing.issn_type = base.get("issn_type")
+                existing.indexed_date_time = base.get("indexed_date_time")
+                existing.indexed_date_parts = base.get("indexed_date_parts")
+                existing.short_journal_title = base.get("short_journal_title")
+                existing.journal_title = base.get("journal_title")
+                existing.issue = base.get("issue")
+                existing.volume = base.get("volume")
                 written += 1
 
             if keyless_rows:
@@ -571,7 +626,7 @@ class ScrapingService:
         # Ensure all dictionary keys are present so SQLAlchemy's bulk insert
         # includes all columns in the INSERT statement, preventing UNKNOWN COLUMN errors.
         all_keys = [
-            "id_sinta", "fullname", "major", 
+            "id_sinta", "fullname", "major", "degree", "faculty",
             "sinta_score_overall", "sinta_score_3yr", "affil_score", "affil_score_3yr",
             "s_article_scopus", "s_citation_scopus", "s_cited_document_scopus", 
             "s_hindex_scopus", "s_i10_index_scopus", "s_gindex_scopus",
@@ -582,7 +637,9 @@ class ScrapingService:
 
         clean_rows = []
         for item in authors_data:
+            # Ensure mandatory fields are present in clean_rows
             row = {k: item.get(k, None) for k in all_keys}
+            row["scraped_at"] = item.get("scraped_at", datetime.utcnow())
             clean_rows.append(row)
 
         async with async_session_maker() as session:
@@ -590,6 +647,8 @@ class ScrapingService:
             stmt = stmt.on_duplicate_key_update(
                 fullname=stmt.inserted.fullname,
                 major=stmt.inserted.major,
+                degree=stmt.inserted.degree,
+                faculty=stmt.inserted.faculty,
                 sinta_score_overall=stmt.inserted.sinta_score_overall,
                 sinta_score_3yr=stmt.inserted.sinta_score_3yr,
                 affil_score=stmt.inserted.affil_score,

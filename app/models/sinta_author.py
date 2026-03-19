@@ -23,7 +23,9 @@ class SintaAuthor(Base):
     id_sinta: Mapped[int] = mapped_column(Integer, primary_key=True)
     fullname: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     major: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
+    degree: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    faculty: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
     # SINTA scores from affiliation list page
     sinta_score_overall: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     sinta_score_3yr: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
