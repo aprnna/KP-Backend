@@ -97,25 +97,25 @@ async def list_jobs(
 ):
     """
     List all scraping jobs.
-    
+
     Supports filtering by status and source, with pagination.
     """
     job_service = JobService(db)
-    
+
     # Convert string enums to model enums
     status_filter = JobStatus(status.value) if status else None
     source_filter = JobSource(source.value) if source else None
-    
+
     jobs = await job_service.list_jobs(
         status=status_filter,
         source=source_filter,
         limit=limit,
         offset=offset,
     )
-    
+
     # Keep list response lightweight by returning only the latest N logs per job.
     job_schemas = [job_to_schema(job, run_logs_limit=logs_limit) for job in jobs]
-    
+
     return JobListResponse(
         jobs=job_schemas,
         total=len(job_schemas),  # TODO: implement total count query
@@ -139,22 +139,22 @@ async def get_job(
 ):
     """
     Get detailed status of a specific job.
-    
+
     Includes job metadata and recent logs.
     """
     job_service = JobService(db)
-    
+
     result = await job_service.get_job_with_logs(job_id)
-    
+
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job with id '{job_id}' not found"
         )
-    
+
     job = result["job"]
     logs = result["logs"]
-    
+
     return JobDetailResponse(
         job=job_to_schema(job),
         logs=[log_to_schema(log) for log in logs],
@@ -188,22 +188,22 @@ async def get_job_logs(
     Get logs for a specific job.
     """
     job_service = JobService(db)
-    
+
     result = await job_service.get_job_with_logs(job_id)
-    
+
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job with id '{job_id}' not found"
         )
-    
+
     logs = result["logs"]
-    
+
     # Filter by level if specified
     if level:
         logs = [log for log in logs if log.level.value == level.upper()]
-    
+
     # Limit results
     logs = logs[:limit]
-    
+
     return [log_to_schema(log) for log in logs]

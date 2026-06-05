@@ -86,6 +86,7 @@ class ScrapingService:
         Called from a BackgroundTask or scheduler coroutine.
         """
         metrics = JobMetrics()
+
         job_db_id, params, source = await self._start_job_and_get_params(job_id)
         if job_db_id is None:
             logger.error("job_not_found", extra={"job_id": job_id})
@@ -94,7 +95,7 @@ class ScrapingService:
         try:
             # Check if user explicitly passed custom SINTA IDs to scrape
             sinta_ids = params.get("sinta_ids") or []
-            
+
             # Phase 1: SINTA Author Scraping
             if source in (JobSource.SINTA_AUTHORS, JobSource.BOTH):
                 sinta_ids = await self._scrape_authors_phase(job_id, job_db_id, metrics)
@@ -112,6 +113,7 @@ class ScrapingService:
             await self._finish_job(job_id, job_db_id, final_total_records)
 
             duration = metrics.elapsed_seconds()
+
             logger.info(
                 "scraping_job_summary",
                 extra={
@@ -258,15 +260,15 @@ class ScrapingService:
         is_new_tracker = job_db_id not in self._progress_trackers
         if is_new_tracker:
             self._progress_trackers[job_db_id] = ProgressTracker(total=total, processed=processed)
-        
+
         tracker = self._progress_trackers[job_db_id]
         tracker.total = total
         tracker.processed = processed
-        
+
         if is_new_tracker or tracker.should_update_db():
             await self._update_job_progress(job_db_id, total, processed)
             tracker.mark_db_updated()
-        
+
         self._append_job_log(job_db_id, logging.INFO, f"Progress: {sinta_id} ({processed}/{total})")
         logger.info("scraping_progress", extra={"job_id": job_id, "sinta_id": sinta_id, "processed": processed, "total": total})
 
