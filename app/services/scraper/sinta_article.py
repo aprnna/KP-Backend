@@ -256,7 +256,7 @@ class SintaArticleScraper(BaseScraper):
         self,
         id_sinta: int,
         job_id: str = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
         """
         Scrape all articles for one author across all 4 SINTA views.
 
@@ -265,10 +265,12 @@ class SintaArticleScraper(BaseScraper):
             job_id:   Job identifier for structured logging
 
         Returns:
-            List of article dicts mapped to sinta_articles columns.
+            Tuple of (articles list, view_breakdown dict) where view_breakdown
+            contains article counts per view: {"scopus": N, "garuda": N, ...}
         """
         all_articles: List[Dict[str, Any]] = []
         t0 = time.monotonic()
+        view_counts: Dict[str, int] = {}
 
         for view in SINTA_VIEWS:
             url = f"{self.base_url}/authors/profile/{id_sinta}/?view={view}"
@@ -279,9 +281,11 @@ class SintaArticleScraper(BaseScraper):
                         "sinta_article_empty_response",
                         extra={"job_id": job_id, "id_sinta": id_sinta, "view": view},
                     )
+                    view_counts[view] = 0
                     continue
                 articles = self._parse_article_items(html, id_sinta, view)
                 all_articles.extend(articles)
+                view_counts[view] = len(articles)
                 logger.debug(
                     "sinta_article_view_done",
                     extra={
@@ -296,24 +300,31 @@ class SintaArticleScraper(BaseScraper):
                     "sinta_article_view_error",
                     extra={"job_id": job_id, "id_sinta": id_sinta, "view": view, "error": str(exc)},
                 )
+                view_counts[view] = 0
 
         elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        # Log detailed breakdown for debugging discrepancies
+        # Format breakdown for log visibility
+        breakdown_str = ", ".join(f"{v}:{c}" for v, c in view_counts.items())
         logger.info(
-            "sinta_article_author_done",
+            f"Author {id_sinta}: {len(all_articles)} articles from {breakdown_str} in {elapsed_ms}ms",
             extra={
                 "job_id": job_id,
                 "id_sinta": id_sinta,
                 "total_articles": len(all_articles),
+                "view_breakdown": view_counts,
                 "duration_ms": elapsed_ms,
             },
         )
-        return all_articles
+        return all_articles, view_counts
 
     async def scrape(
         self,
         sinta_ids: List[int],
         job_id: str = None,
         on_progress: Optional[Callable[[int, int, int], None]] = None,
+        on_author_done: Optional[Callable[[int, Dict[str, int], int], None]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Main scraping method — fetch articles for multiple SINTA author IDs.
@@ -325,6 +336,7 @@ class SintaArticleScraper(BaseScraper):
             sinta_ids:   List of SINTA author IDs to scrape.
             job_id:      Job identifier for logging.
             on_progress: Optional callback(id_sinta, processed, total).
+            on_author_done: Optional callback(id_sinta, view_breakdown, total_articles).
 
         Returns:
             Flat list of article dicts for all authors.
@@ -332,16 +344,18 @@ class SintaArticleScraper(BaseScraper):
         total = len(sinta_ids)
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_AUTHORS)
 
-        async def _scrape_one(idx: int, id_sinta: int) -> List[Dict[str, Any]]:
+        async def _scrape_one(idx: int, id_sinta: int) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
             async with semaphore:
-                result = await self.scrape_author(id_sinta, job_id=job_id)
+                articles, view_breakdown = await self.scrape_author(id_sinta, job_id=job_id)
             if on_progress:
                 on_progress(id_sinta, idx + 1, total)
-            return result
+            if on_author_done:
+                on_author_done(id_sinta, view_breakdown, len(articles))
+            return articles, view_breakdown
 
         tasks = [_scrape_one(i, sid) for i, sid in enumerate(sinta_ids)]
         nested = await asyncio.gather(*tasks)
-        all_results = [item for sublist in nested for item in sublist]
+        all_results = [item for articles, _ in nested for item in articles]
 
         logger.info(
             "sinta_article_scrape_complete",

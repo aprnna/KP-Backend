@@ -166,6 +166,13 @@ class ScrapingService:
 
         await self._log(job_db_id, job_id, f"Starting SINTA article scraping for {len(sinta_ids)} authors…")
 
+        def on_author_done(id_sinta: int, view_breakdown: Dict[str, int], total_articles: int):
+            """Log view breakdown for each completed author."""
+            breakdown_str = ", ".join(f"{v}:{c}" for v, c in view_breakdown.items())
+            asyncio.create_task(
+                self._log(job_db_id, job_id, f"Author {id_sinta}: {total_articles} articles ({breakdown_str})")
+            )
+
         async with SintaArticleScraper() as scraper:
             article_results = await scraper.scrape(
                 sinta_ids=sinta_ids,
@@ -173,6 +180,7 @@ class ScrapingService:
                 on_progress=lambda sid, p, t: asyncio.create_task(
                     self._on_scraping_progress(job_db_id, job_id, sid, p, t)
                 ),
+                on_author_done=on_author_done,
             )
 
         await self._log(job_db_id, job_id, f"Enriching {len(article_results)} articles with Crossref API…")
