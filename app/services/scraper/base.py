@@ -62,12 +62,29 @@ class BaseScraper(ABC):
 
     async def __aenter__(self):
         """Async context manager entry — initializes the HTTP client."""
+        logger.info(
+            "scraper_init",
+            extra={
+                "base_url": self.base_url,
+                "timeout": self.timeout,
+                "request_delay": self.request_delay,
+                "max_retries": self.max_retries,
+            },
+        )
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(self.timeout),
+            timeout=httpx.Timeout(self.timeout, connect=15.0),
             follow_redirects=True,
+            verify=True,
+            http2=True,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
             headers={
-                "User-Agent": f"AcademicScraper/1.0 ({settings.app_name})",
-                "Accept": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "DNT": "1",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
             }
         )
         return self
@@ -183,7 +200,7 @@ class BaseScraper(ABC):
                 last_error = e
                 wait_time = (2 ** attempt) * 1
                 logger.warning(
-                    "api_timeout_retry",
+                    f"api_timeout_retry: {e} (attempt {attempt + 1}/{self.max_retries}, url={url})",
                     extra={"url": url, "attempt": attempt + 1, "wait_sec": wait_time},
                 )
                 await asyncio.sleep(wait_time)
@@ -192,7 +209,7 @@ class BaseScraper(ABC):
                 last_error = e
                 wait_time = (2 ** attempt) * 1
                 logger.warning(
-                    "api_request_error_retry",
+                    f"api_request_error_retry: {e} (attempt {attempt + 1}/{self.max_retries}, url={url})",
                     extra={"url": url, "error": str(e), "attempt": attempt + 1, "wait_sec": wait_time},
                 )
                 await asyncio.sleep(wait_time)
@@ -203,7 +220,7 @@ class BaseScraper(ABC):
             except Exception as e:
                 last_error = e
                 logger.error(
-                    "api_unexpected_error",
+                    f"api_unexpected_error: {e} (attempt {attempt + 1}/{self.max_retries}, url={url})",
                     extra={"url": url, "error": str(e), "attempt": attempt + 1},
                 )
                 if attempt < self.max_retries - 1:

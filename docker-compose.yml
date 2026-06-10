@@ -36,14 +36,11 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
-    # Force hostname resolution for SINTA (Docker DNS issue on Windows)
-    extra_hosts:
-      - "sinta.kemdiktisaintek.go.id:16.79.54.7"
     environment:
       # Database connection
       DB_HOST: mysql
       DB_PORT: 3306
-      DB_NAME: kp_scrapping
+      DB_NAME: ${DB_NAME:-kp_scrapping}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       # API security

@@ -140,9 +140,10 @@ class SintaAuthorScraper(BaseScraper):
                     continue
                 await asyncio.sleep(2 ** attempt)
             except Exception as exc:
+                err_msg = str(exc)
                 logger.warning(
-                    "sinta_author_fetch_error",
-                    extra={"url": url, "error": str(exc), "attempt": attempt + 1},
+                    f"sinta_author_fetch_error: {err_msg} (attempt {attempt + 1}/{self.max_retries}, url={url})",
+                    extra={"url": url, "error": err_msg, "attempt": attempt + 1},
                 )
                 await asyncio.sleep(2 ** attempt)
         return ""

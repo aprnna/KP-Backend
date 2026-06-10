@@ -75,14 +75,15 @@ class SintaArticleScraper(BaseScraper):
                     await asyncio.sleep(retry_after)
                     continue
                 logger.warning(
-                    "sinta_bad_status",
+                    f"sinta_bad_status: HTTP {response.status_code} (attempt {attempt + 1}/{self.max_retries}, url={url})",
                     extra={"url": url, "status": response.status_code, "attempt": attempt + 1},
                 )
                 await asyncio.sleep(2 ** attempt)
             except Exception as exc:
+                err_msg = str(exc)
                 logger.warning(
-                    "sinta_fetch_error",
-                    extra={"url": url, "error": str(exc), "attempt": attempt + 1},
+                    f"sinta_fetch_error: {err_msg} (attempt {attempt + 1}/{self.max_retries}, url={url})",
+                    extra={"url": url, "error": err_msg, "attempt": attempt + 1},
                 )
                 await asyncio.sleep(2 ** attempt)
         return ""
@@ -278,7 +279,7 @@ class SintaArticleScraper(BaseScraper):
                 html = await self._fetch_html(url)
                 if not html:
                     logger.warning(
-                        "sinta_article_empty_response",
+                        f"sinta_article_empty_response: job={job_id}, id_sinta={id_sinta}, view={view}",
                         extra={"job_id": job_id, "id_sinta": id_sinta, "view": view},
                     )
                     view_counts[view] = 0
