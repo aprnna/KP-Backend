@@ -24,4 +24,4 @@ COPY app ./app
 RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
-CMD ["uv", "run", "fastapi", "run"]
+CMD ["uv", "run", "--no-dev", "fastapi", "run"]
